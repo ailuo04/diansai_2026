@@ -196,13 +196,14 @@ void codex_uart_poll_codex(void)
 }
 
 /**
-  * @brief 接收帧处理回调，默认回显收到的数据。
+  * @brief 接收帧处理回调，默认不执行发送，由用户按需重写。
   * @param data 接收数据
   * @param length 接收长度
   */
 __weak void codex_uart_rx_frame_callback_codex(const uint8_t *data, uint16_t length)
 {
-  (void)codex_uart_send_codex(data, length, 100U);
+  (void)data;
+  (void)length;
 }
 
 /**

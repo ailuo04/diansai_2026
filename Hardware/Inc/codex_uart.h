@@ -70,7 +70,7 @@ void codex_uart_clear_overflow_codex(void);
 void codex_uart_poll_codex(void);
 
 /**
-  * @brief 接收帧处理回调，默认回显收到的数据。
+  * @brief 接收帧处理回调，默认不执行发送，由用户按需重写。
   * @param data 接收数据
   * @param length 接收长度
   */
