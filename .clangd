@@ -1,0 +1,18 @@
+CompileFlags:
+  Add:
+    - --target=arm-arm-none-eabi
+    - -mcpu=cortex-m4
+    - -mthumb
+    - -mfpu=fpv4-sp-d16
+    - -mfloat-abi=hard
+    - -DUSE_HAL_DRIVER
+    - -DSTM32F407xx
+    - -ICore/Inc
+    - -IHardware/Inc
+    - -IDrivers/STM32F4xx_HAL_Driver/Inc
+    - -IDrivers/STM32F4xx_HAL_Driver/Inc/Legacy
+    - -IDrivers/CMSIS/Device/ST/STM32F4xx/Include
+    - -IDrivers/CMSIS/Include
+    - -IMDK-ARM/RTE/_diansai
+    - -IMDK-ARM/RTE/Device/STM32F407ZGTx
+    - -IC:/Keil_v5/ARM/ARMCLANG/include

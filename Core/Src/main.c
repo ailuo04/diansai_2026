@@ -18,10 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "codex_uart.h"
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -86,7 +90,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  if (codex_uart_init_codex() != HAL_OK)
+  {
+    Error_Handler();
+  }
+  printf("USART1 ready\r\n");
 
   /* USER CODE END 2 */
 
@@ -97,6 +108,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    codex_uart_poll_codex();
   }
   /* USER CODE END 3 */
 }

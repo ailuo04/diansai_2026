@@ -1,0 +1,48 @@
+{
+  "configurations": [
+    {
+      "name": "STM32F407ZGTx-Keil",
+      "compilerPath": "C:/Keil_v5/ARM/ARMCLANG/bin/armclang.exe",
+      "compilerArgs": [
+        "--target=arm-arm-none-eabi",
+        "-mcpu=cortex-m4",
+        "-mthumb",
+        "-mfpu=fpv4-sp-d16",
+        "-mfloat-abi=hard"
+      ],
+      "intelliSenseMode": "windows-clang-arm",
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "defines": [
+        "USE_HAL_DRIVER",
+        "STM32F407xx"
+      ],
+      "includePath": [
+        "${workspaceFolder}/Core/Inc",
+        "${workspaceFolder}/Hardware/Inc",
+        "${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc",
+        "${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy",
+        "${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+        "${workspaceFolder}/Drivers/CMSIS/Include",
+        "${workspaceFolder}/MDK-ARM/RTE/_diansai",
+        "${workspaceFolder}/MDK-ARM/RTE/Device/STM32F407ZGTx",
+        "C:/Keil_v5/ARM/ARMCLANG/include"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/Core/Inc",
+          "${workspaceFolder}/Hardware/Inc",
+          "${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc",
+          "${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy",
+          "${workspaceFolder}/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+          "${workspaceFolder}/Drivers/CMSIS/Include",
+          "${workspaceFolder}/MDK-ARM/RTE/_diansai",
+          "${workspaceFolder}/MDK-ARM/RTE/Device/STM32F407ZGTx",
+          "C:/Keil_v5/ARM/ARMCLANG/include"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ],
+  "version": 4
+}
