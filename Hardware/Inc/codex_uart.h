@@ -9,70 +9,98 @@ extern "C" {
 #include <stdint.h>
 
 #define CODEX_UART_RX_BUFFER_SIZE 256U
+#define CODEX_UART_RX_FRAME_QUEUE_SIZE 4U
 
 /**
   * @brief 初始化 USART1 空闲中断 DMA 接收。
+  * @details 该函数会清零当前串口接收状态标志，并启动一次新的
+  *          `ReceiveToIdle + DMA` 接收流程。
   * @retval HAL 状态
+  *         - `HAL_OK`：启动成功
+  *         - `HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`：启动失败，具体原因由 HAL 提供
   */
 HAL_StatusTypeDef codex_uart_init_codex(void);
 
 /**
   * @brief 重新启动 USART1 空闲中断 DMA 接收。
+  * @details 该函数会把 `USART1` 的 DMA 接收缓冲区重新挂到 HAL，
+  *          并关闭 DMA 半传输中断，避免半包时提前进入回调。
   * @retval HAL 状态
+  *         - `HAL_OK`：重启成功
+  *         - `HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`：重启失败，具体原因由 HAL 提供
   */
 HAL_StatusTypeDef codex_uart_restart_receive_codex(void);
 
 /**
   * @brief 使用 USART1 阻塞发送一段数据。
-  * @param data 数据指针
-  * @param length 数据长度
-  * @param timeout 超时时间
+  * @param data 待发送数据的首地址；当 `length > 0` 时不能为空指针
+  * @param length 待发送的字节数，单位为字节；传入 `0` 时函数直接返回成功
+  * @param timeout 阻塞发送超时时间，单位为毫秒；通常可传入具体超时值或 `HAL_MAX_DELAY`
   * @retval HAL 状态
+  *         - `HAL_OK`：发送完成
+  *         - `HAL_ERROR`：参数非法或底层发送失败
+  *         - `HAL_BUSY/HAL_TIMEOUT`：串口忙或发送超时
   */
 HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, uint32_t timeout);
 
 /**
   * @brief 使用 USART1 阻塞发送字符串。
-  * @param text 字符串指针
-  * @param timeout 超时时间
+  * @param text 以 `\\0` 结尾的字符串首地址；不能为空指针
+  * @param timeout 每一段字符串阻塞发送的超时时间，单位为毫秒
   * @retval HAL 状态
+  *         - `HAL_OK`：整串字符串发送完成
+  *         - 其他返回值：任意一段发送失败时直接返回对应错误码
   */
 HAL_StatusTypeDef codex_uart_send_string_codex(const char *text, uint32_t timeout);
 
 /**
   * @brief 读取一帧由空闲中断确认的接收数据。
-  * @param data 输出缓冲区
-  * @param max_length 输出缓冲区最大长度
+  * @details 当存在多帧待处理数据时，本函数总是按接收先后顺序，
+  *          读取当前最旧的一帧。
+  * @param data 用户提供的输出缓冲区首地址，用于接收拷出的完整一帧数据
+  * @param max_length 输出缓冲区最大可写长度，单位为字节；用于防止拷贝越界
   * @retval 实际复制的数据长度
+  *         - `0`：当前没有可读帧，或参数非法
+  *         - 其他值：本次成功读出的帧长度
   */
 uint16_t codex_uart_read_frame_codex(uint8_t *data, uint16_t max_length);
 
 /**
   * @brief 查询是否有待处理的接收帧。
+  * @details 只要四槽环形帧队列中至少存在一帧未读数据，本函数就返回 `1`。
   * @retval 1 表示有数据，0 表示无数据
   */
 uint8_t codex_uart_has_frame_codex(void);
 
 /**
   * @brief 查询接收溢出或重启失败标志。
+  * @details 只要发生过以下任意一种情况，本函数就会返回 `1`：
+  *          1. 四槽环形帧队列已满时，新帧覆盖了最旧帧；
+  *          2. 读取帧时用户缓冲区长度不足而被截断；
+  *          3. 回调判定出的接收长度超过单帧缓冲区而被截断；
+  *          4. 重新启动 DMA 接收失败。
   * @retval 1 表示发生过异常，0 表示正常
   */
 uint8_t codex_uart_get_overflow_codex(void);
 
 /**
   * @brief 清除接收溢出和重启失败标志。
+  * @details 一般在用户已经记录或处理完异常后调用。
   */
 void codex_uart_clear_overflow_codex(void);
 
 /**
   * @brief 在主循环中处理已接收的一帧数据。
+  * @details 当队列中存在多帧数据时，本函数每次只取出并处理当前最旧的一帧。
   */
 void codex_uart_poll_codex(void);
 
 /**
   * @brief 接收帧处理回调，默认不执行发送，由用户按需重写。
-  * @param data 接收数据
-  * @param length 接收长度
+  * @details 该回调由 `codex_uart_poll_codex()` 在主循环上下文中调用，
+  *          因此适合放业务解析逻辑，不建议在中断里直接处理的工作也应放到这里。
+  * @param data 当前完整接收帧的首地址，只在本次回调期间有效
+  * @param length 当前完整接收帧的有效字节数
   */
 void codex_uart_rx_frame_callback_codex(const uint8_t *data, uint16_t length);
 
