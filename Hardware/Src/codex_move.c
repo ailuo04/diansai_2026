@@ -1,11 +1,11 @@
-#include "codex_move.h"
+﻿#include "codex_move.h"
 #include "tim.h"
 
-static volatile int16_t codex_move_velocity[CODEX_MOVE_WHEEL_COUNT + 1U];
-static volatile int32_t codex_move_encoder[CODEX_MOVE_WHEEL_COUNT + 1U];
-static volatile float codex_move_target[CODEX_MOVE_WHEEL_COUNT + 1U];
-static volatile codex_pid_t codex_move_speed_pid[CODEX_MOVE_WHEEL_COUNT + 1U];
-static volatile uint8_t codex_move_speed_pid_ready;
+static volatile int16_t codex_move_velocity[CODEX_MOVE_WHEEL_COUNT + 1U];      /* 四路轮子的单周期编码器增量，下标 1~4 有效。 */
+static volatile int32_t codex_move_encoder[CODEX_MOVE_WHEEL_COUNT + 1U];       /* 四路轮子的累计编码器计数，下标 1~4 有效。 */
+static volatile float codex_move_target[CODEX_MOVE_WHEEL_COUNT + 1U];          /* 四路轮子的目标速度或开环 PWM 目标，下标 1~4 有效。 */
+static volatile codex_pid_t codex_move_speed_pid[CODEX_MOVE_WHEEL_COUNT + 1U]; /* 四路轮子的速度 PID 控制器，下标 1~4 有效。 */
+static volatile uint8_t codex_move_speed_pid_ready;                            /* 速度 PID 参数初始化标志，0 表示未初始化。 */
 
 /**
   * @brief 判断轮号是否合法。
@@ -69,8 +69,8 @@ static void codex_move_set_pwm_codex(uint8_t wheel, uint16_t duty)
   */
 static void codex_move_set_direction_codex(uint8_t wheel, int16_t command)
 {
-  GPIO_PinState pin_a;
-  GPIO_PinState pin_b;
+  GPIO_PinState pin_a; /* 当前轮 A 相方向引脚电平。 */
+  GPIO_PinState pin_b; /* 当前轮 B 相方向引脚电平。 */
 
   if (command == 0)
   {
@@ -118,7 +118,7 @@ static void codex_move_set_direction_codex(uint8_t wheel, int16_t command)
   */
 static int16_t codex_move_read_encoder_delta_codex(TIM_HandleTypeDef *htim)
 {
-  int16_t delta;
+  int16_t delta; /* 本周期读取到的编码器有符号增量。 */
 
   delta = (int16_t)__HAL_TIM_GET_COUNTER(htim);
   __HAL_TIM_SET_COUNTER(htim, 0U);
@@ -188,8 +188,8 @@ void codex_move_control_codex(int16_t wheel_1,
                               int16_t wheel_3,
                               int16_t wheel_4)
 {
-  int16_t command[CODEX_MOVE_WHEEL_COUNT + 1U];
-  uint8_t wheel;
+  int16_t command[CODEX_MOVE_WHEEL_COUNT + 1U]; /* 四路限幅后的电机指令，下标 1~4 有效。 */
+  uint8_t wheel;                                /* 当前正在处理的轮号。 */
 
   command[1] = codex_move_limit_pwm_codex(wheel_1);
   command[2] = codex_move_limit_pwm_codex(wheel_2);
@@ -198,7 +198,7 @@ void codex_move_control_codex(int16_t wheel_1,
 
   for (wheel = 1U; wheel <= CODEX_MOVE_WHEEL_COUNT; wheel++)
   {
-    uint16_t duty = (command[wheel] >= 0) ? (uint16_t)command[wheel] : (uint16_t)(-command[wheel]);
+    uint16_t duty = (command[wheel] >= 0) ? (uint16_t)command[wheel] : (uint16_t)(-command[wheel]); /* 写入 PWM 的占空比绝对值。 */
     codex_move_set_direction_codex(wheel, command[wheel]);
     codex_move_set_pwm_codex(wheel, duty);
   }
@@ -206,7 +206,7 @@ void codex_move_control_codex(int16_t wheel_1,
 
 void codex_move_stop_codex(void)
 {
-  uint8_t wheel;
+  uint8_t wheel; /* 当前正在复位目标和 PID 状态的轮号。 */
 
   for (wheel = 1U; wheel <= CODEX_MOVE_WHEEL_COUNT; wheel++)
   {
@@ -232,7 +232,7 @@ void codex_move_update_encoder_codex(void)
 
 void codex_move_reset_encoder_codex(void)
 {
-  uint8_t wheel;
+  uint8_t wheel; /* 当前正在清零软件计数的轮号。 */
 
   __HAL_TIM_SET_COUNTER(&htim1, 0U);
   __HAL_TIM_SET_COUNTER(&htim2, 0U);
@@ -272,7 +272,7 @@ void codex_move_set_speed_pid_codex(float kp,
                                     float integral_limit,
                                     float output_limit)
 {
-  uint8_t wheel;
+  uint8_t wheel; /* 当前正在写入 PID 参数的轮号。 */
 
   for (wheel = 1U; wheel <= CODEX_MOVE_WHEEL_COUNT; wheel++)
   {
@@ -302,8 +302,8 @@ void codex_move_mecanum_inverse_codex(float move_vx, float move_vy, float move_v
 
 void codex_move_velocity_pid_update_codex(void)
 {
-  int16_t output[CODEX_MOVE_WHEEL_COUNT + 1U];
-  uint8_t wheel;
+  int16_t output[CODEX_MOVE_WHEEL_COUNT + 1U]; /* 四路速度闭环计算后的 PWM 输出，下标 1~4 有效。 */
+  uint8_t wheel;                               /* 当前正在计算速度闭环的轮号。 */
 
   codex_move_update_encoder_codex();
 
@@ -314,7 +314,7 @@ void codex_move_velocity_pid_update_codex(void)
       float value = codex_pid_calc_incremental_codex(&codex_move_speed_pid[wheel],
                                                      codex_move_target[wheel],
                                                      (float)codex_move_velocity[wheel],
-                                                     CODEX_MOVE_DEFAULT_TARGET_LIMIT);
+                                                     CODEX_MOVE_DEFAULT_TARGET_LIMIT); /* 当前轮 PID 计算得到的浮点 PWM 输出。 */
       output[wheel] = codex_move_float_to_pwm_codex(value);
     }
     else

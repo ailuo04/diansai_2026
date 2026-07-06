@@ -1,4 +1,4 @@
-#ifndef CODEX_MOVE_H
+﻿#ifndef CODEX_MOVE_H
 #define CODEX_MOVE_H
 
 #ifdef __cplusplus
@@ -9,9 +9,9 @@ extern "C" {
 #include "main.h"
 #include <stdint.h>
 
-#define CODEX_MOVE_WHEEL_COUNT          4U
-#define CODEX_MOVE_PWM_MAX              900
-#define CODEX_MOVE_DEFAULT_TARGET_LIMIT 1500.0f
+#define CODEX_MOVE_WHEEL_COUNT          4U      /* 底盘轮子数量，数组下标 1~4 对应四个电机。 */
+#define CODEX_MOVE_PWM_MAX              900     /* 电机 PWM 输出最大绝对值，匹配 TIM8 自动重装载值范围。 */
+#define CODEX_MOVE_DEFAULT_TARGET_LIMIT 1500.0f /* 速度闭环默认目标限幅，防止异常目标直接打满输出。 */
 
 /**
   * @brief 初始化四路电机 PWM 与四路编码器。

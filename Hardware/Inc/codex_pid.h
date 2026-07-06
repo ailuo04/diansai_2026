@@ -1,4 +1,4 @@
-#ifndef CODEX_PID_H
+﻿#ifndef CODEX_PID_H
 #define CODEX_PID_H
 
 #ifdef __cplusplus
@@ -9,16 +9,16 @@ extern "C" {
 
 typedef struct
 {
-  float kp;
-  float ki;
-  float kd;
-  float error;
-  float last_error;
-  float prev_error;
-  float integral;
-  float output;
-  float integral_limit;
-  float output_limit;
+  float kp;             /* 比例系数，用于放大当前误差。 */
+  float ki;             /* 积分系数，用于消除长期静态误差。 */
+  float kd;             /* 微分系数，用于抑制误差变化过快。 */
+  float error;          /* 当前控制周期误差。 */
+  float last_error;     /* 上一个控制周期误差。 */
+  float prev_error;     /* 上上个控制周期误差，增量式 PID 微分项使用。 */
+  float integral;       /* 位置式 PID 的积分累计值。 */
+  float output;         /* 当前 PID 输出值。 */
+  float integral_limit; /* 积分限幅绝对值，小于等于 0 表示不限幅。 */
+  float output_limit;   /* 输出限幅绝对值，小于等于 0 表示不限幅。 */
 } codex_pid_t;
 
 /**

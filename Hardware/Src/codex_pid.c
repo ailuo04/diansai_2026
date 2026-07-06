@@ -1,4 +1,4 @@
-#include "codex_pid.h"
+﻿#include "codex_pid.h"
 
 /**
   * @brief 计算浮点绝对值。
@@ -23,7 +23,7 @@ static float codex_pid_abs_codex(float value)
   */
 static float codex_pid_limit_codex(float value, float limit)
 {
-  float abs_limit;
+  float abs_limit; /* 统一转成正数后的限幅阈值。 */
 
   if (limit <= 0.0f)
   {
@@ -99,7 +99,7 @@ float codex_pid_calc_position_codex(volatile codex_pid_t *pid, float target, flo
 
 float codex_pid_calc_angle_codex(volatile codex_pid_t *pid, float target, float actual)
 {
-  float error;
+  float error; /* 折算到 -180 到 180 度范围内的角度误差。 */
 
   if (pid == 0)
   {
