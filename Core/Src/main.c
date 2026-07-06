@@ -24,6 +24,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "codex_hwt101_iic.h"
 #include "codex_uart.h"
 #include <stdio.h>
 
@@ -97,6 +98,7 @@ int main(void)
   {
     Error_Handler();
   }
+  codex_hwt101_iic_init_codex();
   printf("USART1 ready\r\n");
 
   /* USER CODE END 2 */

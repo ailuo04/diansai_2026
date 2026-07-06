@@ -57,6 +57,10 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define HWT101_SCL_Pin GPIO_PIN_0
+#define HWT101_SCL_GPIO_Port GPIOC
+#define HWT101_SDA_Pin GPIO_PIN_1
+#define HWT101_SDA_GPIO_Port GPIOC
 
 /* USER CODE BEGIN Private defines */
 

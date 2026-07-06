@@ -542,6 +542,11 @@
               <FileType>1</FileType>
               <FilePath>../Hardware/Src/codex_uart.c</FilePath>
             </File>
+            <File>
+              <FileName>codex_hwt101_iic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/codex_hwt101_iic.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
