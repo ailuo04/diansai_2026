@@ -1,4 +1,4 @@
-﻿#include "codex_uart.h"
+#include "codex_uart.h"
 #include "usart.h"
 #include <stdio.h>
 #include <string.h>
@@ -51,13 +51,11 @@ static void codex_uart_restore_irq_codex(uint32_t primask)
 }
 
 /**
-  * @brief 初始化 USART1 空闲中断 DMA 接收。
+  * @brief 初始化 USART2 空闲中断 DMA 接收。
   * @details 该函数只负责初始化软件状态并启动第一次接收，
-  *          不负责 `USART1` 外设本身的时钟、GPIO、DMA 和中断初始化；
-  *          这些底层初始化由 `MX_USART1_UART_Init()` 完成。
+  *          不负责 `USART2` 外设本身的时钟、GPIO、DMA 和中断初始化；
+  *          这些底层初始化由 CubeMX 生成的初始化函数完成。
   * @retval HAL 状态
-  *         - `HAL_OK`：首次接收启动成功
-  *         - `HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`：首次接收启动失败
   */
 HAL_StatusTypeDef codex_uart_init_codex(void)
 {
@@ -76,36 +74,31 @@ HAL_StatusTypeDef codex_uart_init_codex(void)
 }
 
 /**
-  * @brief 重新启动 USART1 空闲中断 DMA 接收。
+  * @brief 重新启动 USART2 空闲中断 DMA 接收。
   * @details 每次一帧接收完成，或发生错误后，都会调用本函数重新挂起下一轮接收。
   * @retval HAL 状态
-  *         - `HAL_OK`：重启成功
-  *         - `HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`：重启失败
   */
 HAL_StatusTypeDef codex_uart_restart_receive_codex(void)
 {
   HAL_StatusTypeDef status;
 
-  status = HAL_UARTEx_ReceiveToIdle_DMA(&huart1,
+  status = HAL_UARTEx_ReceiveToIdle_DMA(&huart2,
                                         codex_uart_rx_dma_buffer,
                                         CODEX_UART_RX_BUFFER_SIZE);
-  if (status == HAL_OK && huart1.hdmarx != NULL)
+  if (status == HAL_OK && huart2.hdmarx != NULL)
   {
-    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+    __HAL_DMA_DISABLE_IT(huart2.hdmarx, DMA_IT_HT);
   }
 
   return status;
 }
 
 /**
-  * @brief 使用 USART1 阻塞发送一段数据。
+  * @brief 使用 USART2 阻塞发送一段数据。
   * @param data 待发送数据的首地址；当 `length > 0` 时不能为空
   * @param length 待发送的数据字节数；传入 `0` 时直接返回 `HAL_OK`
-  * @param timeout 发送超时时间，单位为毫秒；实际由 `HAL_UART_Transmit()` 解释
+  * @param timeout 发送超时时间，单位为毫秒
   * @retval HAL 状态
-  *         - `HAL_OK`：发送成功
-  *         - `HAL_ERROR`：空指针等非法参数，或 HAL 发送失败
-  *         - `HAL_BUSY/HAL_TIMEOUT`：串口忙或发送超时
   */
 HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, uint32_t timeout)
 {
@@ -119,11 +112,11 @@ HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, ui
     return HAL_ERROR;
   }
 
-  return HAL_UART_Transmit(&huart1, (uint8_t *)data, length, timeout);
+  return HAL_UART_Transmit(&huart2, (uint8_t *)data, length, timeout);
 }
 
 /**
-  * @brief 使用 USART1 阻塞发送字符串。
+  * @brief 使用 USART2 阻塞发送字符串。
   * @param text 以 `\\0` 结尾的字符串首地址；不能为空
   * @param timeout 每一段阻塞发送的超时时间，单位为毫秒
   * @retval HAL 状态
@@ -211,8 +204,6 @@ uint16_t codex_uart_read_frame_codex(uint8_t *data, uint16_t max_length)
 
 /**
   * @brief 查询是否有待处理的接收帧。
-  * @details 这是一个轻量级状态查询接口，不会清除任何标志；
-  *          只要环形帧队列非空，就会返回 `1`。
   * @retval 1 表示有数据，0 表示无数据
   */
 uint8_t codex_uart_has_frame_codex(void)
@@ -222,11 +213,6 @@ uint8_t codex_uart_has_frame_codex(void)
 
 /**
   * @brief 查询接收溢出或重启失败标志。
-  * @details 只要发生过以下任意一种情况，本函数就会返回 `1`：
-  *          1. 四槽环形帧队列已满时，新帧覆盖了最旧帧；
-  *          2. 读取帧时用户缓冲区长度不足而被截断；
-  *          3. 回调判定出的接收长度超过单帧缓冲区而被截断；
-  *          4. 重新启动 DMA 接收失败。
   * @retval 1 表示发生过异常，0 表示正常
   */
 uint8_t codex_uart_get_overflow_codex(void)
@@ -236,7 +222,6 @@ uint8_t codex_uart_get_overflow_codex(void)
 
 /**
   * @brief 清除接收溢出和重启失败标志。
-  * @details 一般在用户已经记录或处理完异常后调用。
   */
 void codex_uart_clear_overflow_codex(void)
 {
@@ -262,8 +247,6 @@ void codex_uart_poll_codex(void)
 
 /**
   * @brief 接收帧处理回调，默认不执行发送，由用户按需重写。
-  * @details 这是一个弱定义函数。若用户在其他源文件里实现同名强定义函数，
-  *          则链接时会覆盖本默认实现。
   * @param data 当前完整接收帧的首地址
   * @param length 当前完整接收帧的有效字节数
   */
@@ -274,12 +257,12 @@ __weak void codex_uart_rx_frame_callback_codex(const uint8_t *data, uint16_t len
 }
 
 /**
-  * @brief USART1 空闲中断 DMA 接收事件回调。
+  * @brief USART2 空闲中断 DMA 接收事件回调。
   * @details 该回调运行在中断上下文中，只做“尽快搬运和置位”，
   *          不做耗时业务处理。处理完成后会立即重新启动下一轮接收。
   *          若四槽环形帧队列已满，则会用最新一帧覆盖当前最旧帧，
   *          以优先保证数据实时性。
-  * @param huart 触发本次回调的 UART 句柄指针；本实现只处理 `USART1`
+  * @param huart 触发本次回调的 UART 句柄指针；本实现只处理 `USART2`
   * @param Size 本次从 DMA 缓冲区中判定为“有效接收”的字节数
   */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
@@ -287,7 +270,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
   uint16_t copy_length;
   uint8_t write_index;
 
-  if (huart->Instance != USART1)
+  if (huart->Instance != USART2)
   {
     return;
   }
@@ -329,14 +312,12 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 }
 
 /**
-  * @brief USART1 错误回调，发生错误后尝试恢复接收。
-  * @details 该回调运行在中断相关上下文中。当前实现把错误统一视为异常，
-  *          先置位异常标志，再尝试恢复下一轮 DMA 接收。
-  * @param huart 发生错误的 UART 句柄指针；本实现只处理 `USART1`
+  * @brief USART2 错误回调，发生错误后尝试恢复接收。
+  * @param huart 发生错误的 UART 句柄指针；本实现只处理 `USART2`
   */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance != USART1)
+  if (huart->Instance != USART2)
   {
     return;
   }
@@ -349,11 +330,9 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 }
 
 /**
-  * @brief 将 printf 的字符输出重定向到 USART1。
-  * @details 这是标准库字符输出钩子。当前实现是“单字符阻塞发送”，
-  *          因此 `printf` 输出过多时会占用较长主循环时间。
-  * @param ch 待输出的单个字符，取值范围由 C 标准库 `int` 约定
-  * @param f 标准库文件流指针；当前实现未使用该参数，仅为满足函数签名保留
+  * @brief 将 printf 的字符输出重定向到 USART2。
+  * @param ch 待输出的单个字符
+  * @param f 标准库文件流指针
   * @retval 成功时返回原字符，失败时返回 EOF
   */
 int fputc(int ch, FILE *f)
@@ -362,7 +341,7 @@ int fputc(int ch, FILE *f)
 
   (void)f;
 
-  if (HAL_UART_Transmit(&huart1, &byte, 1U, HAL_MAX_DELAY) != HAL_OK)
+  if (HAL_UART_Transmit(&huart2, &byte, 1U, HAL_MAX_DELAY) != HAL_OK)
   {
     return EOF;
   }

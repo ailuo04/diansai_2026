@@ -61,6 +61,30 @@ void Error_Handler(void);
 #define HWT101_SCL_GPIO_Port GPIOC
 #define HWT101_SDA_Pin GPIO_PIN_1
 #define HWT101_SDA_GPIO_Port GPIOC
+#define Move_4B_Pin GPIO_PIN_5
+#define Move_4B_GPIO_Port GPIOG
+#define Move_3B_Pin GPIO_PIN_6
+#define Move_3B_GPIO_Port GPIOG
+#define Move_4A_Pin GPIO_PIN_7
+#define Move_4A_GPIO_Port GPIOG
+#define Move_3A_Pin GPIO_PIN_8
+#define Move_3A_GPIO_Port GPIOG
+#define Motor1_Pin GPIO_PIN_6
+#define Motor1_GPIO_Port GPIOC
+#define Motor2_Pin GPIO_PIN_7
+#define Motor2_GPIO_Port GPIOC
+#define Motor3_Pin GPIO_PIN_8
+#define Motor3_GPIO_Port GPIOC
+#define Motor4_Pin GPIO_PIN_9
+#define Motor4_GPIO_Port GPIOC
+#define Move_2B_Pin GPIO_PIN_6
+#define Move_2B_GPIO_Port GPIOD
+#define Move_2A_Pin GPIO_PIN_7
+#define Move_2A_GPIO_Port GPIOD
+#define Move_1A_Pin GPIO_PIN_10
+#define Move_1A_GPIO_Port GPIOG
+#define Move_1B_Pin GPIO_PIN_11
+#define Move_1B_GPIO_Port GPIOG
 
 /* USER CODE BEGIN Private defines */
 

@@ -12,7 +12,7 @@ extern "C" {
 #define CODEX_UART_RX_FRAME_QUEUE_SIZE 4U
 
 /**
-  * @brief 初始化 USART1 空闲中断 DMA 接收。
+  * @brief 初始化 USART2 空闲中断 DMA 接收。
   * @details 该函数会清零当前串口接收状态标志，并启动一次新的
   *          `ReceiveToIdle + DMA` 接收流程。
   * @retval HAL 状态
@@ -22,8 +22,8 @@ extern "C" {
 HAL_StatusTypeDef codex_uart_init_codex(void);
 
 /**
-  * @brief 重新启动 USART1 空闲中断 DMA 接收。
-  * @details 该函数会把 `USART1` 的 DMA 接收缓冲区重新挂到 HAL，
+  * @brief 重新启动 USART2 空闲中断 DMA 接收。
+  * @details 该函数会把 `USART2` 的 DMA 接收缓冲区重新挂到 HAL，
   *          并关闭 DMA 半传输中断，避免半包时提前进入回调。
   * @retval HAL 状态
   *         - `HAL_OK`：重启成功
@@ -32,7 +32,7 @@ HAL_StatusTypeDef codex_uart_init_codex(void);
 HAL_StatusTypeDef codex_uart_restart_receive_codex(void);
 
 /**
-  * @brief 使用 USART1 阻塞发送一段数据。
+  * @brief 使用 USART2 阻塞发送一段数据。
   * @param data 待发送数据的首地址；当 `length > 0` 时不能为空指针
   * @param length 待发送的字节数，单位为字节；传入 `0` 时函数直接返回成功
   * @param timeout 阻塞发送超时时间，单位为毫秒；通常可传入具体超时值或 `HAL_MAX_DELAY`
@@ -44,7 +44,7 @@ HAL_StatusTypeDef codex_uart_restart_receive_codex(void);
 HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, uint32_t timeout);
 
 /**
-  * @brief 使用 USART1 阻塞发送字符串。
+  * @brief 使用 USART2 阻塞发送字符串。
   * @param text 以 `\\0` 结尾的字符串首地址；不能为空指针
   * @param timeout 每一段字符串阻塞发送的超时时间，单位为毫秒
   * @retval HAL 状态

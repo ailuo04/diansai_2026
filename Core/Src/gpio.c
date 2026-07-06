@@ -48,9 +48,19 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, HWT101_SCL_Pin|HWT101_SDA_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOG, Move_4B_Pin|Move_3B_Pin|Move_4A_Pin|Move_3A_Pin
+                          |Move_1A_Pin|Move_1B_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, Move_2B_Pin|Move_2A_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : HWT101_SCL_Pin HWT101_SDA_Pin */
   GPIO_InitStruct.Pin = HWT101_SCL_Pin|HWT101_SDA_Pin;
@@ -58,6 +68,22 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Move_4B_Pin Move_3B_Pin Move_4A_Pin Move_3A_Pin
+                           Move_1A_Pin Move_1B_Pin */
+  GPIO_InitStruct.Pin = Move_4B_Pin|Move_3B_Pin|Move_4A_Pin|Move_3A_Pin
+                          |Move_1A_Pin|Move_1B_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Move_2B_Pin Move_2A_Pin */
+  GPIO_InitStruct.Pin = Move_2B_Pin|Move_2A_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
 }
 
