@@ -10,10 +10,11 @@ extern "C" {
 
 #define MY_UART_RX_BUFFER_SIZE 256U
 #define MY_UART_RX_FRAME_QUEUE_SIZE 4U
+#define MY_UART_TX_BUFFER_SIZE 512U
 
 /**
-  * @brief 初始化 USART2 空闲中断 DMA 接收。
-  * @details 该函数会清零当前串口接收状态标志，并启动一次新的
+  * @brief 初始化 USART3 DMA 收发。
+  * @details 该函数会清零当前串口收发状态，并启动一次新的
   *          `ReceiveToIdle + DMA` 接收流程。
   * @retval HAL 状态
   *         - `HAL_OK`：启动成功
@@ -22,8 +23,8 @@ extern "C" {
 HAL_StatusTypeDef My_uart_init_My(void);
 
 /**
-  * @brief 重新启动 USART2 空闲中断 DMA 接收。
-  * @details 该函数会把 `USART2` 的 DMA 接收缓冲区重新挂到 HAL，
+  * @brief 重新启动 USART3 空闲中断 DMA 接收。
+  * @details 该函数会把 `USART3` 的 DMA 接收缓冲区重新挂到 HAL，
   *          并关闭 DMA 半传输中断，避免半包时提前进入回调。
   * @retval HAL 状态
   *         - `HAL_OK`：重启成功
@@ -32,23 +33,23 @@ HAL_StatusTypeDef My_uart_init_My(void);
 HAL_StatusTypeDef My_uart_restart_receive_My(void);
 
 /**
-  * @brief 使用 USART2 阻塞发送一段数据。
+  * @brief 把一段数据复制到 USART3 DMA 发送队列。
   * @param data 待发送数据的首地址；当 `length > 0` 时不能为空指针
   * @param length 待发送的字节数，单位为字节；传入 `0` 时函数直接返回成功
-  * @param timeout 阻塞发送超时时间，单位为毫秒；通常可传入具体超时值或 `HAL_MAX_DELAY`
+  * @param timeout 等待发送队列空间的超时时间，单位为毫秒
   * @retval HAL 状态
-  *         - `HAL_OK`：发送完成
-  *         - `HAL_ERROR`：参数非法或底层发送失败
-  *         - `HAL_BUSY/HAL_TIMEOUT`：串口忙或发送超时
+  *         - `HAL_OK`：数据已全部进入 DMA 发送队列
+  *         - `HAL_ERROR`：参数非法或 DMA 启动失败
+  *         - `HAL_TIMEOUT`：等待发送队列空间超时
   */
 HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t timeout);
 
 /**
-  * @brief 使用 USART2 阻塞发送字符串。
+  * @brief 把字符串复制到 USART3 DMA 发送队列。
   * @param text 以 `\\0` 结尾的字符串首地址；不能为空指针
-  * @param timeout 每一段字符串阻塞发送的超时时间，单位为毫秒
+  * @param timeout 每一段字符串等待发送队列空间的超时时间，单位为毫秒
   * @retval HAL 状态
-  *         - `HAL_OK`：整串字符串发送完成
+  *         - `HAL_OK`：整串字符串已进入 DMA 发送队列
   *         - 其他返回值：任意一段发送失败时直接返回对应错误码
   */
 HAL_StatusTypeDef My_uart_send_string_My(const char *text, uint32_t timeout);
@@ -78,7 +79,8 @@ uint8_t My_uart_has_frame_My(void);
   *          1. 四槽环形帧队列已满时，新帧覆盖了最旧帧；
   *          2. 读取帧时用户缓冲区长度不足而被截断；
   *          3. 回调判定出的接收长度超过单帧缓冲区而被截断；
-  *          4. 重新启动 DMA 接收失败。
+  *          4. 重新启动 DMA 接收失败；
+  *          5. DMA 发送启动或运行异常。
   * @retval 1 表示发生过异常，0 表示正常
   */
 uint8_t My_uart_get_overflow_My(void);

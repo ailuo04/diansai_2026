@@ -49,7 +49,7 @@
             <NotGenerated>0</NotGenerated>
             <InvalidFlash>1</InvalidFlash>
           </TargetStatus>
-          <OutputDirectory>diansai\</OutputDirectory>
+          <OutputDirectory>.\diansai\</OutputDirectory>
           <OutputName>diansai</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
@@ -81,9 +81,9 @@
             <nStopB2X>0</nStopB2X>
           </BeforeMake>
           <AfterMake>
-            <RunUserProg1>0</RunUserProg1>
+            <RunUserProg1>1</RunUserProg1>
             <RunUserProg2>1</RunUserProg2>
-            <UserProg1Name></UserProg1Name>
+            <UserProg1Name>python ..\Hardware\Tools\My_merge_oled_font_hex.py --application .\diansai\diansai.hex --font ..\Hardware\Fonts\My_oled_gb2312_font.hex --output .\diansai\diansai_with_gb2312.hex</UserProg1Name>
             <UserProg2Name></UserProg2Name>
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
@@ -315,7 +315,7 @@
           </ArmAdsMisc>
           <Cads>
             <interw>1</interw>
-            <Optim>4</Optim>
+            <Optim>1</Optim>
             <oTime>0</oTime>
             <SplitLS>0</SplitLS>
             <OneElfS>1</OneElfS>
@@ -594,14 +594,24 @@
               <FilePath>../Hardware/Src/My_uart.c</FilePath>
             </File>
             <File>
-              <FileName>My_hwt101_iic.c</FileName>
+              <FileName>IIC.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../Hardware/Src/My_hwt101_iic.c</FilePath>
+              <FilePath>../Hardware/Src/IIC.c</FilePath>
+            </File>
+            <File>
+              <FileName>HWT101.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/HWT101.c</FilePath>
             </File>
             <File>
               <FileName>My_oled.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/Src/My_oled.c</FilePath>
+            </File>
+            <File>
+              <FileName>My_timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_timer.c</FilePath>
             </File>
             <File>
               <FileName>My_pid.c</FileName>

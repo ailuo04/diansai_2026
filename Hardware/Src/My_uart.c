@@ -26,6 +26,16 @@ static uint8_t My_uart_poll_buffer[MY_UART_RX_BUFFER_SIZE];
 static volatile uint8_t My_uart_rx_overflow;
 /* 重新启动 DMA 接收流程时是否发生过失败。 */
 static volatile uint8_t My_uart_rx_restart_error;
+/* DMA 发送环形缓冲区，调用者数据在返回前会复制到此处。 */
+static uint8_t My_uart_tx_buffer[MY_UART_TX_BUFFER_SIZE];
+/* 当前最旧待发送字节在环形缓冲区中的索引。 */
+static volatile uint16_t My_uart_tx_head;
+/* 环形缓冲区中等待发送及正在发送的总字节数。 */
+static volatile uint16_t My_uart_tx_count;
+/* 当前 DMA 正在发送的连续字节数，0 表示 DMA 空闲。 */
+static volatile uint16_t My_uart_tx_dma_length;
+/* DMA 发送启动或运行过程中是否发生过异常。 */
+static volatile uint8_t My_uart_tx_error;
 
 /**
   * @brief 计算环形队列中的下一个槽位索引。
@@ -58,9 +68,51 @@ static void My_uart_restore_irq_My(uint32_t primask)
 }
 
 /**
-  * @brief 初始化 USART2 空闲中断 DMA 接收。
+  * @brief 在发送队列非空且 DMA 空闲时启动一次连续区域发送。
+  * @retval HAL 状态；队列为空或已有发送进行时返回 `HAL_OK`
+  */
+static HAL_StatusTypeDef My_uart_start_transmit_My(void)
+{
+  HAL_StatusTypeDef status;
+  uint32_t primask;
+  uint16_t length;
+
+  primask = __get_PRIMASK();
+  __disable_irq();
+
+  if (My_uart_tx_dma_length != 0U || My_uart_tx_count == 0U)
+  {
+    My_uart_restore_irq_My(primask);
+    return HAL_OK;
+  }
+
+  length = My_uart_tx_count;
+  if (length > (uint16_t)(MY_UART_TX_BUFFER_SIZE - My_uart_tx_head))
+  {
+    length = (uint16_t)(MY_UART_TX_BUFFER_SIZE - My_uart_tx_head);
+  }
+
+  My_uart_tx_dma_length = length;
+  status = HAL_UART_Transmit_DMA(&huart3,
+                                 &My_uart_tx_buffer[My_uart_tx_head],
+                                 length);
+  if (status != HAL_OK)
+  {
+    My_uart_tx_dma_length = 0U;
+    if (status != HAL_BUSY)
+    {
+      My_uart_tx_error = 1U;
+    }
+  }
+
+  My_uart_restore_irq_My(primask);
+  return status;
+}
+
+/**
+  * @brief 初始化 USART3 DMA 收发。
   * @details 该函数只负责初始化软件状态并启动第一次接收，
-  *          不负责 `USART2` 外设本身的时钟、GPIO、DMA 和中断初始化；
+  *          不负责 `USART3` 外设本身的时钟、GPIO、DMA 和中断初始化；
   *          这些底层初始化由 CubeMX 生成的初始化函数完成。
   * @retval HAL 状态
   */
@@ -76,12 +128,16 @@ HAL_StatusTypeDef My_uart_init_My(void)
   }
   My_uart_rx_overflow = 0U;
   My_uart_rx_restart_error = 0U;
+  My_uart_tx_head = 0U;
+  My_uart_tx_count = 0U;
+  My_uart_tx_dma_length = 0U;
+  My_uart_tx_error = 0U;
 
   return My_uart_restart_receive_My();
 }
 
 /**
-  * @brief 重新启动 USART2 空闲中断 DMA 接收。
+  * @brief 重新启动 USART3 空闲中断 DMA 接收。
   * @details 每次一帧接收完成，或发生错误后，都会调用本函数重新挂起下一轮接收。
   * @retval HAL 状态
   */
@@ -89,26 +145,30 @@ HAL_StatusTypeDef My_uart_restart_receive_My(void)
 {
   HAL_StatusTypeDef status;
 
-  status = HAL_UARTEx_ReceiveToIdle_DMA(&huart2,
+  status = HAL_UARTEx_ReceiveToIdle_DMA(&huart3,
                                         My_uart_rx_dma_buffer,
                                         MY_UART_RX_BUFFER_SIZE);
-  if (status == HAL_OK && huart2.hdmarx != NULL)
+  if (status == HAL_OK && huart3.hdmarx != NULL)
   {
-    __HAL_DMA_DISABLE_IT(huart2.hdmarx, DMA_IT_HT);
+    __HAL_DMA_DISABLE_IT(huart3.hdmarx, DMA_IT_HT);
   }
 
   return status;
 }
 
 /**
-  * @brief 使用 USART2 阻塞发送一段数据。
+  * @brief 把一段数据复制到 USART3 DMA 发送队列。
   * @param data 待发送数据的首地址；当 `length > 0` 时不能为空
   * @param length 待发送的数据字节数；传入 `0` 时直接返回 `HAL_OK`
-  * @param timeout 发送超时时间，单位为毫秒
+  * @param timeout 等待发送队列空间的超时时间，单位为毫秒
   * @retval HAL 状态
   */
 HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t timeout)
 {
+  HAL_StatusTypeDef status;
+  uint32_t start_tick;
+  uint16_t sent_length = 0U;
+
   if (length == 0U)
   {
     return HAL_OK;
@@ -119,11 +179,61 @@ HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t
     return HAL_ERROR;
   }
 
-  return HAL_UART_Transmit(&huart2, (uint8_t *)data, length, timeout);
+  start_tick = HAL_GetTick();
+  while (sent_length < length)
+  {
+    uint32_t primask;
+    uint16_t available;
+    uint16_t copy_length;
+    uint16_t write_index;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+
+    available = (uint16_t)(MY_UART_TX_BUFFER_SIZE - My_uart_tx_count);
+    if (available > 0U)
+    {
+      write_index = (uint16_t)(My_uart_tx_head + My_uart_tx_count);
+      if (write_index >= MY_UART_TX_BUFFER_SIZE)
+      {
+        write_index = (uint16_t)(write_index - MY_UART_TX_BUFFER_SIZE);
+      }
+
+      copy_length = (uint16_t)(length - sent_length);
+      if (copy_length > available)
+      {
+        copy_length = available;
+      }
+      if (copy_length > (uint16_t)(MY_UART_TX_BUFFER_SIZE - write_index))
+      {
+        copy_length = (uint16_t)(MY_UART_TX_BUFFER_SIZE - write_index);
+      }
+
+      memcpy(&My_uart_tx_buffer[write_index], &data[sent_length], copy_length);
+      My_uart_tx_count = (uint16_t)(My_uart_tx_count + copy_length);
+      sent_length = (uint16_t)(sent_length + copy_length);
+    }
+
+    My_uart_restore_irq_My(primask);
+
+    status = My_uart_start_transmit_My();
+    if (status != HAL_OK && status != HAL_BUSY)
+    {
+      return status;
+    }
+
+    if (sent_length < length && timeout != HAL_MAX_DELAY &&
+        (HAL_GetTick() - start_tick) >= timeout)
+    {
+      return HAL_TIMEOUT;
+    }
+  }
+
+  return HAL_OK;
 }
 
 /**
-  * @brief 使用 USART2 阻塞发送字符串。
+  * @brief 把字符串复制到 USART3 DMA 发送队列。
   * @param text 以 `\\0` 结尾的字符串首地址；不能为空
   * @param timeout 每一段阻塞发送的超时时间，单位为毫秒
   * @retval HAL 状态
@@ -224,7 +334,9 @@ uint8_t My_uart_has_frame_My(void)
   */
 uint8_t My_uart_get_overflow_My(void)
 {
-  return (uint8_t)((My_uart_rx_overflow != 0U) || (My_uart_rx_restart_error != 0U));
+  return (uint8_t)((My_uart_rx_overflow != 0U) ||
+                   (My_uart_rx_restart_error != 0U) ||
+                   (My_uart_tx_error != 0U));
 }
 
 /**
@@ -234,6 +346,7 @@ void My_uart_clear_overflow_My(void)
 {
   My_uart_rx_overflow = 0U;
   My_uart_rx_restart_error = 0U;
+  My_uart_tx_error = 0U;
 }
 
 /**
@@ -244,8 +357,14 @@ void My_uart_clear_overflow_My(void)
   */
 void My_uart_poll_My(void)
 {
+  HAL_StatusTypeDef status = My_uart_start_transmit_My();
   uint16_t length = My_uart_read_frame_My(My_uart_poll_buffer,
                                                 MY_UART_RX_BUFFER_SIZE);
+
+  if (status != HAL_OK && status != HAL_BUSY)
+  {
+    My_uart_tx_error = 1U;
+  }
   if (length > 0U)
   {
     My_uart_rx_frame_callback_My(My_uart_poll_buffer, length);
@@ -264,12 +383,12 @@ __weak void My_uart_rx_frame_callback_My(const uint8_t *data, uint16_t length)
 }
 
 /**
-  * @brief USART2 空闲中断 DMA 接收事件回调。
+  * @brief USART3 空闲中断 DMA 接收事件回调。
   * @details 该回调运行在中断上下文中，只做“尽快搬运和置位”，
   *          不做耗时业务处理。处理完成后会立即重新启动下一轮接收。
   *          若四槽环形帧队列已满，则会用最新一帧覆盖当前最旧帧，
   *          以优先保证数据实时性。
-  * @param huart 触发本次回调的 UART 句柄指针；本实现只处理 `USART2`
+  * @param huart 触发本次回调的 UART 句柄指针；本实现只处理 `USART3`
   * @param Size 本次从 DMA 缓冲区中判定为“有效接收”的字节数
   */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
@@ -277,7 +396,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
   uint16_t copy_length;
   uint8_t write_index;
 
-  if (huart->Instance != USART2)
+  if (huart->Instance != USART3)
   {
     return;
   }
@@ -319,17 +438,69 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 }
 
 /**
-  * @brief USART2 错误回调，发生错误后尝试恢复接收。
-  * @param huart 发生错误的 UART 句柄指针；本实现只处理 `USART2`
+  * @brief USART3 DMA 发送完成回调。
+  * @details 释放本次已发送区域，并立即启动环形缓冲区中的下一段数据。
+  * @param huart 触发本次回调的 UART 句柄指针
+  */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  uint32_t primask;
+  uint16_t completed_length;
+
+  if (huart->Instance != USART3)
+  {
+    return;
+  }
+
+  primask = __get_PRIMASK();
+  __disable_irq();
+
+  completed_length = My_uart_tx_dma_length;
+  if (completed_length > 0U && completed_length <= My_uart_tx_count)
+  {
+    My_uart_tx_head = (uint16_t)(My_uart_tx_head + completed_length);
+    if (My_uart_tx_head >= MY_UART_TX_BUFFER_SIZE)
+    {
+      My_uart_tx_head = (uint16_t)(My_uart_tx_head - MY_UART_TX_BUFFER_SIZE);
+    }
+    My_uart_tx_count = (uint16_t)(My_uart_tx_count - completed_length);
+  }
+  else if (completed_length != 0U)
+  {
+    My_uart_tx_head = 0U;
+    My_uart_tx_count = 0U;
+    My_uart_tx_error = 1U;
+  }
+  My_uart_tx_dma_length = 0U;
+
+  My_uart_restore_irq_My(primask);
+  if (My_uart_start_transmit_My() != HAL_OK)
+  {
+    My_uart_tx_error = 1U;
+  }
+}
+
+/**
+  * @brief USART3 错误回调，发生错误后尝试恢复 DMA 收发。
+  * @param huart 发生错误的 UART 句柄指针；本实现只处理 `USART3`
   */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance != USART2)
+  if (huart->Instance != USART3)
   {
     return;
   }
 
   My_uart_rx_overflow = 1U;
+  if (My_uart_tx_dma_length != 0U && huart->gState == HAL_UART_STATE_READY)
+  {
+    My_uart_tx_dma_length = 0U;
+    My_uart_tx_error = 1U;
+    if (My_uart_start_transmit_My() != HAL_OK)
+    {
+      My_uart_tx_error = 1U;
+    }
+  }
   if (My_uart_restart_receive_My() != HAL_OK)
   {
     My_uart_rx_restart_error = 1U;
@@ -337,7 +508,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 }
 
 /**
-  * @brief 将 printf 的字符输出重定向到 USART2。
+  * @brief 将 printf 的字符复制到 USART3 DMA 发送队列。
   * @param ch 待输出的单个字符
   * @param f 标准库文件流指针
   * @retval 成功时返回原字符，失败时返回 EOF
@@ -348,7 +519,7 @@ int fputc(int ch, FILE *f)
 
   (void)f;
 
-  if (HAL_UART_Transmit(&huart2, &byte, 1U, HAL_MAX_DELAY) != HAL_OK)
+  if (My_uart_send_My(&byte, 1U, HAL_MAX_DELAY) != HAL_OK)
   {
     return EOF;
   }

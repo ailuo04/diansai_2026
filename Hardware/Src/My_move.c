@@ -46,16 +46,16 @@ static void My_move_set_pwm_My(uint8_t wheel, uint16_t duty)
   switch (wheel)
   {
     case 1U:
-      __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_1, duty);
+      __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_1, duty);
       break;
     case 2U:
-      __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_2, duty);
+      __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, duty);
       break;
     case 3U:
-      __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_3, duty);
+      __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_3, duty);
       break;
     case 4U:
-      __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, duty);
+      __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_4, duty);
       break;
     default:
       break;
@@ -104,7 +104,8 @@ static void My_move_set_direction_My(uint8_t wheel, int16_t command)
       break;
     case 4U:
       HAL_GPIO_WritePin(Move_4A_GPIO_Port, Move_4A_Pin, pin_a);
-      HAL_GPIO_WritePin(Move_4B_GPIO_Port, Move_4B_Pin, pin_b);
+      /* CubeMX 中 PG5 保持为输出，但当前未配置用户标签。 */
+      HAL_GPIO_WritePin(GPIOG, GPIO_PIN_5, pin_b);
       break;
     default:
       break;
@@ -128,19 +129,19 @@ static int16_t My_move_float_to_pwm_My(float value)
 
 HAL_StatusTypeDef My_move_init_My(void)
 {
-  if (HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1) != HAL_OK)
   {
     return HAL_ERROR;
   }
-  if (HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_2) != HAL_OK)
+  if (HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2) != HAL_OK)
   {
     return HAL_ERROR;
   }
-  if (HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3) != HAL_OK)
+  if (HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_3) != HAL_OK)
   {
     return HAL_ERROR;
   }
-  if (HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4) != HAL_OK)
+  if (HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_4) != HAL_OK)
   {
     return HAL_ERROR;
   }

@@ -304,6 +304,8 @@ HAL_StatusTypeDef My_hwt101_iic_read_len_My(uint8_t reg, uint8_t *data, uint8_t 
     return HAL_ERROR;
   }
 
+  My_hwt101_iic_stop_My();
+  My_hwt101_iic_delay_My(2U);
   My_hwt101_iic_start_My();
   My_hwt101_iic_send_byte_My((uint8_t)((MY_HWT101_IIC_ADDRESS << 1U) | 0x01U));
   if (My_hwt101_iic_wait_ack_My() != MY_HWT101_IIC_OK)

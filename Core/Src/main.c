@@ -25,10 +25,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "My_hwt101_iic.h"
+#include "HWT101.h"
 #include "My_move.h"
 #include "My_uart.h"
 #include "My_oled.h"
+#include "My_timer.h"
 #include <stdio.h>
 
 /* USER CODE END Includes */
@@ -45,13 +46,12 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+extern volatile float Angle;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -73,7 +73,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  uint32_t elapsed_ms; /* 当前计时结果，单位为毫秒。 */
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -95,21 +95,17 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_TIM8_Init();
-  MX_USART2_UART_Init();
+  MX_TIM5_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(USART2_IRQn);
   if (My_uart_init_My() != HAL_OK)
   {
     Error_Handler();
   }
-  My_hwt101_iic_init_My();
+  HWT101_getAngle_Reset();
   if (My_oled_init_My() == HAL_OK)
   {
     My_oled_set_cursor_My(0U, 0U);
-    My_oled_write_string_My("OLED OK");
-    printf("OLED ACK: 0x%02X\r\n", My_oled_get_address_My());
   }
   else
   {
@@ -119,19 +115,26 @@ int main(void)
   {
     Error_Handler();
   }
-  printf("USART2 ready\r\n");
-	My_oled_write_string_My("角度：");
+  printf("USART3 DMA ready\r\n");
+	My_timer_start_My(); /* 将本调用移动到实际需要开始计时的位置。 */
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+		HWT101_getAngle();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
     My_uart_poll_My();
-  }
+		My_oled_printf_at_My(1U, 1U, "角度：%-7.3f°",Angle);
+		elapsed_ms = My_timer_get_elapsed_ms_My();
+		My_oled_printf_at_My(2U, 1U, "计时:%5u.%us",
+			(unsigned int)(elapsed_ms / 1000U),
+			(unsigned int)((elapsed_ms / 100U) % 10U));
+	}
   /* USER CODE END 3 */
 }
 
