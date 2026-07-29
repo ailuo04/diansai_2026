@@ -1,5 +1,5 @@
-﻿#ifndef CODEX_UART_H
-#define CODEX_UART_H
+﻿#ifndef MY_UART_H
+#define MY_UART_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -8,8 +8,8 @@ extern "C" {
 #include "main.h"
 #include <stdint.h>
 
-#define CODEX_UART_RX_BUFFER_SIZE 256U
-#define CODEX_UART_RX_FRAME_QUEUE_SIZE 4U
+#define MY_UART_RX_BUFFER_SIZE 256U
+#define MY_UART_RX_FRAME_QUEUE_SIZE 4U
 
 /**
   * @brief 初始化 USART2 空闲中断 DMA 接收。
@@ -19,7 +19,7 @@ extern "C" {
   *         - `HAL_OK`：启动成功
   *         - `HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`：启动失败，具体原因由 HAL 提供
   */
-HAL_StatusTypeDef codex_uart_init_codex(void);
+HAL_StatusTypeDef My_uart_init_My(void);
 
 /**
   * @brief 重新启动 USART2 空闲中断 DMA 接收。
@@ -29,7 +29,7 @@ HAL_StatusTypeDef codex_uart_init_codex(void);
   *         - `HAL_OK`：重启成功
   *         - `HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`：重启失败，具体原因由 HAL 提供
   */
-HAL_StatusTypeDef codex_uart_restart_receive_codex(void);
+HAL_StatusTypeDef My_uart_restart_receive_My(void);
 
 /**
   * @brief 使用 USART2 阻塞发送一段数据。
@@ -41,7 +41,7 @@ HAL_StatusTypeDef codex_uart_restart_receive_codex(void);
   *         - `HAL_ERROR`：参数非法或底层发送失败
   *         - `HAL_BUSY/HAL_TIMEOUT`：串口忙或发送超时
   */
-HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, uint32_t timeout);
+HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t timeout);
 
 /**
   * @brief 使用 USART2 阻塞发送字符串。
@@ -51,7 +51,7 @@ HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, ui
   *         - `HAL_OK`：整串字符串发送完成
   *         - 其他返回值：任意一段发送失败时直接返回对应错误码
   */
-HAL_StatusTypeDef codex_uart_send_string_codex(const char *text, uint32_t timeout);
+HAL_StatusTypeDef My_uart_send_string_My(const char *text, uint32_t timeout);
 
 /**
   * @brief 读取一帧由空闲中断确认的接收数据。
@@ -63,14 +63,14 @@ HAL_StatusTypeDef codex_uart_send_string_codex(const char *text, uint32_t timeou
   *         - `0`：当前没有可读帧，或参数非法
   *         - 其他值：本次成功读出的帧长度
   */
-uint16_t codex_uart_read_frame_codex(uint8_t *data, uint16_t max_length);
+uint16_t My_uart_read_frame_My(uint8_t *data, uint16_t max_length);
 
 /**
   * @brief 查询是否有待处理的接收帧。
   * @details 只要四槽环形帧队列中至少存在一帧未读数据，本函数就返回 `1`。
   * @retval 1 表示有数据，0 表示无数据
   */
-uint8_t codex_uart_has_frame_codex(void);
+uint8_t My_uart_has_frame_My(void);
 
 /**
   * @brief 查询接收溢出或重启失败标志。
@@ -81,31 +81,31 @@ uint8_t codex_uart_has_frame_codex(void);
   *          4. 重新启动 DMA 接收失败。
   * @retval 1 表示发生过异常，0 表示正常
   */
-uint8_t codex_uart_get_overflow_codex(void);
+uint8_t My_uart_get_overflow_My(void);
 
 /**
   * @brief 清除接收溢出和重启失败标志。
   * @details 一般在用户已经记录或处理完异常后调用。
   */
-void codex_uart_clear_overflow_codex(void);
+void My_uart_clear_overflow_My(void);
 
 /**
   * @brief 在主循环中处理已接收的一帧数据。
   * @details 当队列中存在多帧数据时，本函数每次只取出并处理当前最旧的一帧。
   */
-void codex_uart_poll_codex(void);
+void My_uart_poll_My(void);
 
 /**
   * @brief 接收帧处理回调，默认不执行发送，由用户按需重写。
-  * @details 该回调由 `codex_uart_poll_codex()` 在主循环上下文中调用，
+  * @details 该回调由 `My_uart_poll_My()` 在主循环上下文中调用，
   *          因此适合放业务解析逻辑，不建议在中断里直接处理的工作也应放到这里。
   * @param data 当前完整接收帧的首地址，只在本次回调期间有效
   * @param length 当前完整接收帧的有效字节数
   */
-void codex_uart_rx_frame_callback_codex(const uint8_t *data, uint16_t length);
+void My_uart_rx_frame_callback_My(const uint8_t *data, uint16_t length);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* CODEX_UART_H */
+#endif /* MY_UART_H */

@@ -1,34 +1,41 @@
-#include "codex_uart.h"
+﻿#include "My_uart.h"
 #include "usart.h"
 #include <stdio.h>
 #include <string.h>
+#include <rt_misc.h>
+
+__asm(".global __use_no_semihosting\n");
+
+/* ARM 标准库需要由应用提供文件流对象，避免启动阶段进入半主机断点。 */
+FILE __stdout;
+FILE __stdin;
 
 /* DMA 正在写入的原始接收缓冲区。 */
-static uint8_t codex_uart_rx_dma_buffer[CODEX_UART_RX_BUFFER_SIZE];
+static uint8_t My_uart_rx_dma_buffer[MY_UART_RX_BUFFER_SIZE];
 /* 由空闲中断确认后的“四槽环形帧队列”。 */
-static uint8_t codex_uart_rx_frame_queue[CODEX_UART_RX_FRAME_QUEUE_SIZE][CODEX_UART_RX_BUFFER_SIZE];
+static uint8_t My_uart_rx_frame_queue[MY_UART_RX_FRAME_QUEUE_SIZE][MY_UART_RX_BUFFER_SIZE];
 /* 每个槽位中当前帧的有效字节数。 */
-static volatile uint16_t codex_uart_rx_frame_lengths[CODEX_UART_RX_FRAME_QUEUE_SIZE];
+static volatile uint16_t My_uart_rx_frame_lengths[MY_UART_RX_FRAME_QUEUE_SIZE];
 /* 指向当前最旧未读帧的槽位索引。 */
-static volatile uint8_t codex_uart_rx_queue_head;
+static volatile uint8_t My_uart_rx_queue_head;
 /* 当前队列中待处理帧的数量，范围为 0~4。 */
-static volatile uint8_t codex_uart_rx_queue_count;
+static volatile uint8_t My_uart_rx_queue_count;
 /* 主循环读取最旧一帧时使用的临时拷贝缓冲区。 */
-static uint8_t codex_uart_poll_buffer[CODEX_UART_RX_BUFFER_SIZE];
+static uint8_t My_uart_poll_buffer[MY_UART_RX_BUFFER_SIZE];
 /* 接收过程中是否发生过队列覆盖、缓冲区截断或恢复异常。 */
-static volatile uint8_t codex_uart_rx_overflow;
+static volatile uint8_t My_uart_rx_overflow;
 /* 重新启动 DMA 接收流程时是否发生过失败。 */
-static volatile uint8_t codex_uart_rx_restart_error;
+static volatile uint8_t My_uart_rx_restart_error;
 
 /**
   * @brief 计算环形队列中的下一个槽位索引。
   * @param index 当前槽位索引
   * @retval 下一个槽位索引；到达队尾后会自动回绕到 `0`
   */
-static uint8_t codex_uart_next_queue_index_codex(uint8_t index)
+static uint8_t My_uart_next_queue_index_My(uint8_t index)
 {
   index++;
-  if (index >= CODEX_UART_RX_FRAME_QUEUE_SIZE)
+  if (index >= MY_UART_RX_FRAME_QUEUE_SIZE)
   {
     index = 0U;
   }
@@ -42,7 +49,7 @@ static uint8_t codex_uart_next_queue_index_codex(uint8_t index)
   *                当该值为 `0` 时表示进入临界区前中断是开启状态，
   *                此时函数会在退出时重新打开中断
   */
-static void codex_uart_restore_irq_codex(uint32_t primask)
+static void My_uart_restore_irq_My(uint32_t primask)
 {
   if (primask == 0U)
   {
@@ -57,20 +64,20 @@ static void codex_uart_restore_irq_codex(uint32_t primask)
   *          这些底层初始化由 CubeMX 生成的初始化函数完成。
   * @retval HAL 状态
   */
-HAL_StatusTypeDef codex_uart_init_codex(void)
+HAL_StatusTypeDef My_uart_init_My(void)
 {
   uint8_t index;
 
-  codex_uart_rx_queue_head = 0U;
-  codex_uart_rx_queue_count = 0U;
-  for (index = 0U; index < CODEX_UART_RX_FRAME_QUEUE_SIZE; index++)
+  My_uart_rx_queue_head = 0U;
+  My_uart_rx_queue_count = 0U;
+  for (index = 0U; index < MY_UART_RX_FRAME_QUEUE_SIZE; index++)
   {
-    codex_uart_rx_frame_lengths[index] = 0U;
+    My_uart_rx_frame_lengths[index] = 0U;
   }
-  codex_uart_rx_overflow = 0U;
-  codex_uart_rx_restart_error = 0U;
+  My_uart_rx_overflow = 0U;
+  My_uart_rx_restart_error = 0U;
 
-  return codex_uart_restart_receive_codex();
+  return My_uart_restart_receive_My();
 }
 
 /**
@@ -78,13 +85,13 @@ HAL_StatusTypeDef codex_uart_init_codex(void)
   * @details 每次一帧接收完成，或发生错误后，都会调用本函数重新挂起下一轮接收。
   * @retval HAL 状态
   */
-HAL_StatusTypeDef codex_uart_restart_receive_codex(void)
+HAL_StatusTypeDef My_uart_restart_receive_My(void)
 {
   HAL_StatusTypeDef status;
 
   status = HAL_UARTEx_ReceiveToIdle_DMA(&huart2,
-                                        codex_uart_rx_dma_buffer,
-                                        CODEX_UART_RX_BUFFER_SIZE);
+                                        My_uart_rx_dma_buffer,
+                                        MY_UART_RX_BUFFER_SIZE);
   if (status == HAL_OK && huart2.hdmarx != NULL)
   {
     __HAL_DMA_DISABLE_IT(huart2.hdmarx, DMA_IT_HT);
@@ -100,7 +107,7 @@ HAL_StatusTypeDef codex_uart_restart_receive_codex(void)
   * @param timeout 发送超时时间，单位为毫秒
   * @retval HAL 状态
   */
-HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, uint32_t timeout)
+HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t timeout)
 {
   if (length == 0U)
   {
@@ -123,7 +130,7 @@ HAL_StatusTypeDef codex_uart_send_codex(const uint8_t *data, uint16_t length, ui
   *         - `HAL_OK`：整串字符串发送成功
   *         - 其他返回值：其中某一段发送失败，直接返回对应错误码
   */
-HAL_StatusTypeDef codex_uart_send_string_codex(const char *text, uint32_t timeout)
+HAL_StatusTypeDef My_uart_send_string_My(const char *text, uint32_t timeout)
 {
   const uint8_t *cursor;
   size_t remain;
@@ -139,7 +146,7 @@ HAL_StatusTypeDef codex_uart_send_string_codex(const char *text, uint32_t timeou
   while (remain > 0U)
   {
     uint16_t chunk = (remain > UINT16_MAX) ? UINT16_MAX : (uint16_t)remain;
-    HAL_StatusTypeDef status = codex_uart_send_codex(cursor, chunk, timeout);
+    HAL_StatusTypeDef status = My_uart_send_My(cursor, chunk, timeout);
 
     if (status != HAL_OK)
     {
@@ -164,7 +171,7 @@ HAL_StatusTypeDef codex_uart_send_string_codex(const char *text, uint32_t timeou
   *         - `0`：没有可读帧或参数非法
   *         - 其他值：本次成功读出的字节数
   */
-uint16_t codex_uart_read_frame_codex(uint8_t *data, uint16_t max_length)
+uint16_t My_uart_read_frame_My(uint8_t *data, uint16_t max_length)
 {
   uint32_t primask;
   uint16_t length;
@@ -178,26 +185,26 @@ uint16_t codex_uart_read_frame_codex(uint8_t *data, uint16_t max_length)
   primask = __get_PRIMASK();
   __disable_irq();
 
-  if (codex_uart_rx_queue_count == 0U)
+  if (My_uart_rx_queue_count == 0U)
   {
-    codex_uart_restore_irq_codex(primask);
+    My_uart_restore_irq_My(primask);
     return 0U;
   }
 
-  read_index = codex_uart_rx_queue_head;
-  length = codex_uart_rx_frame_lengths[read_index];
+  read_index = My_uart_rx_queue_head;
+  length = My_uart_rx_frame_lengths[read_index];
   if (length > max_length)
   {
     length = max_length;
-    codex_uart_rx_overflow = 1U;
+    My_uart_rx_overflow = 1U;
   }
 
-  memcpy(data, codex_uart_rx_frame_queue[read_index], length);
-  codex_uart_rx_frame_lengths[read_index] = 0U;
-  codex_uart_rx_queue_head = codex_uart_next_queue_index_codex(read_index);
-  codex_uart_rx_queue_count--;
+  memcpy(data, My_uart_rx_frame_queue[read_index], length);
+  My_uart_rx_frame_lengths[read_index] = 0U;
+  My_uart_rx_queue_head = My_uart_next_queue_index_My(read_index);
+  My_uart_rx_queue_count--;
 
-  codex_uart_restore_irq_codex(primask);
+  My_uart_restore_irq_My(primask);
 
   return length;
 }
@@ -206,42 +213,42 @@ uint16_t codex_uart_read_frame_codex(uint8_t *data, uint16_t max_length)
   * @brief 查询是否有待处理的接收帧。
   * @retval 1 表示有数据，0 表示无数据
   */
-uint8_t codex_uart_has_frame_codex(void)
+uint8_t My_uart_has_frame_My(void)
 {
-  return (uint8_t)(codex_uart_rx_queue_count != 0U);
+  return (uint8_t)(My_uart_rx_queue_count != 0U);
 }
 
 /**
   * @brief 查询接收溢出或重启失败标志。
   * @retval 1 表示发生过异常，0 表示正常
   */
-uint8_t codex_uart_get_overflow_codex(void)
+uint8_t My_uart_get_overflow_My(void)
 {
-  return (uint8_t)((codex_uart_rx_overflow != 0U) || (codex_uart_rx_restart_error != 0U));
+  return (uint8_t)((My_uart_rx_overflow != 0U) || (My_uart_rx_restart_error != 0U));
 }
 
 /**
   * @brief 清除接收溢出和重启失败标志。
   */
-void codex_uart_clear_overflow_codex(void)
+void My_uart_clear_overflow_My(void)
 {
-  codex_uart_rx_overflow = 0U;
-  codex_uart_rx_restart_error = 0U;
+  My_uart_rx_overflow = 0U;
+  My_uart_rx_restart_error = 0U;
 }
 
 /**
   * @brief 在主循环中处理已接收的一帧数据。
   * @details 该函数先尝试读取一帧，再把该帧交给
-  *          `codex_uart_rx_frame_callback_codex()` 做后续业务处理；
+  *          `My_uart_rx_frame_callback_My()` 做后续业务处理；
   *          若队列中存在多帧数据，则每次只处理最旧的一帧。
   */
-void codex_uart_poll_codex(void)
+void My_uart_poll_My(void)
 {
-  uint16_t length = codex_uart_read_frame_codex(codex_uart_poll_buffer,
-                                                CODEX_UART_RX_BUFFER_SIZE);
+  uint16_t length = My_uart_read_frame_My(My_uart_poll_buffer,
+                                                MY_UART_RX_BUFFER_SIZE);
   if (length > 0U)
   {
-    codex_uart_rx_frame_callback_codex(codex_uart_poll_buffer, length);
+    My_uart_rx_frame_callback_My(My_uart_poll_buffer, length);
   }
 }
 
@@ -250,7 +257,7 @@ void codex_uart_poll_codex(void)
   * @param data 当前完整接收帧的首地址
   * @param length 当前完整接收帧的有效字节数
   */
-__weak void codex_uart_rx_frame_callback_codex(const uint8_t *data, uint16_t length)
+__weak void My_uart_rx_frame_callback_My(const uint8_t *data, uint16_t length)
 {
   (void)data;
   (void)length;
@@ -277,37 +284,37 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
   if (Size > 0U)
   {
-    copy_length = (Size > CODEX_UART_RX_BUFFER_SIZE) ? CODEX_UART_RX_BUFFER_SIZE : Size;
-    if (Size > CODEX_UART_RX_BUFFER_SIZE)
+    copy_length = (Size > MY_UART_RX_BUFFER_SIZE) ? MY_UART_RX_BUFFER_SIZE : Size;
+    if (Size > MY_UART_RX_BUFFER_SIZE)
     {
-      codex_uart_rx_overflow = 1U;
+      My_uart_rx_overflow = 1U;
     }
 
-    if (codex_uart_rx_queue_count < CODEX_UART_RX_FRAME_QUEUE_SIZE)
+    if (My_uart_rx_queue_count < MY_UART_RX_FRAME_QUEUE_SIZE)
     {
-      write_index = (uint8_t)(codex_uart_rx_queue_head + codex_uart_rx_queue_count);
-      if (write_index >= CODEX_UART_RX_FRAME_QUEUE_SIZE)
+      write_index = (uint8_t)(My_uart_rx_queue_head + My_uart_rx_queue_count);
+      if (write_index >= MY_UART_RX_FRAME_QUEUE_SIZE)
       {
-        write_index = (uint8_t)(write_index - CODEX_UART_RX_FRAME_QUEUE_SIZE);
+        write_index = (uint8_t)(write_index - MY_UART_RX_FRAME_QUEUE_SIZE);
       }
 
-      memcpy(codex_uart_rx_frame_queue[write_index], codex_uart_rx_dma_buffer, copy_length);
-      codex_uart_rx_frame_lengths[write_index] = copy_length;
-      codex_uart_rx_queue_count++;
+      memcpy(My_uart_rx_frame_queue[write_index], My_uart_rx_dma_buffer, copy_length);
+      My_uart_rx_frame_lengths[write_index] = copy_length;
+      My_uart_rx_queue_count++;
     }
     else
     {
-      write_index = codex_uart_rx_queue_head;
-      memcpy(codex_uart_rx_frame_queue[write_index], codex_uart_rx_dma_buffer, copy_length);
-      codex_uart_rx_frame_lengths[write_index] = copy_length;
-      codex_uart_rx_queue_head = codex_uart_next_queue_index_codex(write_index);
-      codex_uart_rx_overflow = 1U;
+      write_index = My_uart_rx_queue_head;
+      memcpy(My_uart_rx_frame_queue[write_index], My_uart_rx_dma_buffer, copy_length);
+      My_uart_rx_frame_lengths[write_index] = copy_length;
+      My_uart_rx_queue_head = My_uart_next_queue_index_My(write_index);
+      My_uart_rx_overflow = 1U;
     }
   }
 
-  if (codex_uart_restart_receive_codex() != HAL_OK)
+  if (My_uart_restart_receive_My() != HAL_OK)
   {
-    codex_uart_rx_restart_error = 1U;
+    My_uart_rx_restart_error = 1U;
   }
 }
 
@@ -322,10 +329,10 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     return;
   }
 
-  codex_uart_rx_overflow = 1U;
-  if (codex_uart_restart_receive_codex() != HAL_OK)
+  My_uart_rx_overflow = 1U;
+  if (My_uart_restart_receive_My() != HAL_OK)
   {
-    codex_uart_rx_restart_error = 1U;
+    My_uart_rx_restart_error = 1U;
   }
 }
 
@@ -347,4 +354,36 @@ int fputc(int ch, FILE *f)
   }
 
   return ch;
+}
+
+/**
+  * @brief 标准输入未启用时返回文件结束标志。
+  * @param f 标准库文件流指针
+  * @retval EOF
+  */
+int fgetc(FILE *f)
+{
+  (void)f;
+  return EOF;
+}
+
+/**
+  * @brief 向 ARM 标准库提供终端字符输出接口。
+  * @param ch 待输出字符
+  */
+void _ttywrch(int ch)
+{
+  (void)fputc(ch, &__stdout);
+}
+
+/**
+  * @brief 禁止固件退出后进入半主机服务。
+  * @param return_code 程序退出码
+  */
+void _sys_exit(int return_code)
+{
+  (void)return_code;
+  while (1)
+  {
+  }
 }

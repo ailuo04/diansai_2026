@@ -1,17 +1,17 @@
-﻿#ifndef CODEX_MOVE_H
-#define CODEX_MOVE_H
+﻿#ifndef MY_MOVE_H
+#define MY_MOVE_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "codex_pid.h"
+#include "My_pid.h"
 #include "main.h"
 #include <stdint.h>
 
-#define CODEX_MOVE_WHEEL_COUNT          4U      /* 底盘轮子数量，数组下标 1~4 对应四个电机。 */
-#define CODEX_MOVE_PWM_MAX              900     /* 电机 PWM 输出最大绝对值，匹配 TIM8 自动重装载值范围。 */
-#define CODEX_MOVE_DEFAULT_TARGET_LIMIT 1500.0f /* 速度闭环默认目标限幅，防止异常目标直接打满输出。 */
+#define MY_MOVE_WHEEL_COUNT          4U      /* 底盘轮子数量，数组下标 1~4 对应四个电机。 */
+#define MY_MOVE_PWM_MAX              900     /* 电机 PWM 输出最大绝对值，匹配 TIM8 自动重装载值范围。 */
+#define MY_MOVE_DEFAULT_TARGET_LIMIT 1500.0f /* 速度闭环默认目标限幅，防止异常目标直接打满输出。 */
 
 /**
   * @brief 初始化四路电机 PWM 与四路编码器。
@@ -19,7 +19,7 @@ extern "C" {
   *          1 号轮 TIM3，2 号轮 TIM2，3 号轮 TIM1，4 号轮 TIM4。
   * @retval HAL_OK 表示全部启动成功，否则表示至少一个定时器启动失败
   */
-HAL_StatusTypeDef codex_move_init_codex(void);
+HAL_StatusTypeDef My_move_init_My(void);
 
 /**
   * @brief 直接控制四个电机 PWM。
@@ -28,7 +28,7 @@ HAL_StatusTypeDef codex_move_init_codex(void);
   * @param wheel_3 3 号电机指令，正负表示方向
   * @param wheel_4 4 号电机指令，正负表示方向
   */
-void codex_move_control_codex(int16_t wheel_1,
+void My_move_control_My(int16_t wheel_1,
                               int16_t wheel_2,
                               int16_t wheel_3,
                               int16_t wheel_4);
@@ -36,33 +36,33 @@ void codex_move_control_codex(int16_t wheel_1,
 /**
   * @brief 停止四个电机并清零速度 PID 输出。
   */
-void codex_move_stop_codex(void);
+void My_move_stop_My(void);
 
 /**
   * @brief 读取并累计四路编码器增量。
   * @details 应在固定周期中调用；调用后本周期速度可用
-  *          `codex_move_get_velocity_codex()` 读取。
+  *          `My_move_get_velocity_My()` 读取。
   */
-void codex_move_update_encoder_codex(void);
+void My_move_update_encoder_My(void);
 
 /**
   * @brief 清零四路编码器累计值与硬件计数器。
   */
-void codex_move_reset_encoder_codex(void);
+void My_move_reset_encoder_My(void);
 
 /**
   * @brief 读取指定轮子的本周期编码器速度。
   * @param wheel 轮号，范围 1~4
   * @retval 本周期编码器增量；轮号非法时返回 0
   */
-int16_t codex_move_get_velocity_codex(uint8_t wheel);
+int16_t My_move_get_velocity_My(uint8_t wheel);
 
 /**
   * @brief 读取指定轮子的累计编码器位置。
   * @param wheel 轮号，范围 1~4
   * @retval 累计编码器增量；轮号非法时返回 0
   */
-int32_t codex_move_get_encoder_codex(uint8_t wheel);
+int32_t My_move_get_encoder_My(uint8_t wheel);
 
 /**
   * @brief 设置四路速度 PID 参数。
@@ -72,7 +72,7 @@ int32_t codex_move_get_encoder_codex(uint8_t wheel);
   * @param integral_limit 积分限幅
   * @param output_limit 输出限幅
   */
-void codex_move_set_speed_pid_codex(float kp,
+void My_move_set_speed_pid_My(float kp,
                                     float ki,
                                     float kd,
                                     float integral_limit,
@@ -85,7 +85,7 @@ void codex_move_set_speed_pid_codex(float kp,
   * @param wheel_3 3 号轮目标
   * @param wheel_4 4 号轮目标
   */
-void codex_move_set_target_codex(float wheel_1,
+void My_move_set_target_My(float wheel_1,
                                  float wheel_2,
                                  float wheel_3,
                                  float wheel_4);
@@ -96,16 +96,16 @@ void codex_move_set_target_codex(float wheel_1,
   * @param move_vy y 方向速度
   * @param move_vw 旋转速度
   */
-void codex_move_mecanum_inverse_codex(float move_vx, float move_vy, float move_vw);
+void My_move_mecanum_inverse_My(float move_vx, float move_vy, float move_vw);
 
 /**
   * @brief 根据目标速度和编码器反馈执行一次速度闭环。
   * @details 若未设置 PID 参数，则把目标速度直接作为 PWM 指令输出，便于低风险空载调试。
   */
-void codex_move_velocity_pid_update_codex(void);
+void My_move_velocity_pid_update_My(void);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* CODEX_MOVE_H */
+#endif /* MY_MOVE_H */

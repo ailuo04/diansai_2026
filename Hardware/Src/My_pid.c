@@ -1,11 +1,11 @@
-﻿#include "codex_pid.h"
+﻿#include "My_pid.h"
 
 /**
   * @brief 计算浮点绝对值。
   * @param value 输入值
   * @retval 输入值的绝对值
   */
-static float codex_pid_abs_codex(float value)
+static float My_pid_abs_My(float value)
 {
   if (value < 0.0f)
   {
@@ -21,7 +21,7 @@ static float codex_pid_abs_codex(float value)
   * @param limit 限幅绝对值；小于等于 0 时不限制
   * @retval 限幅后的值
   */
-static float codex_pid_limit_codex(float value, float limit)
+static float My_pid_limit_My(float value, float limit)
 {
   float abs_limit; /* 统一转成正数后的限幅阈值。 */
 
@@ -30,7 +30,7 @@ static float codex_pid_limit_codex(float value, float limit)
     return value;
   }
 
-  abs_limit = codex_pid_abs_codex(limit);
+  abs_limit = My_pid_abs_My(limit);
   if (value > abs_limit)
   {
     return abs_limit;
@@ -43,7 +43,7 @@ static float codex_pid_limit_codex(float value, float limit)
   return value;
 }
 
-void codex_pid_init_codex(volatile codex_pid_t *pid,
+void My_pid_init_My(volatile My_pid_t *pid,
                           float kp,
                           float ki,
                           float kd,
@@ -60,10 +60,10 @@ void codex_pid_init_codex(volatile codex_pid_t *pid,
   pid->kd = kd;
   pid->integral_limit = integral_limit;
   pid->output_limit = output_limit;
-  codex_pid_reset_codex(pid);
+  My_pid_reset_My(pid);
 }
 
-void codex_pid_reset_codex(volatile codex_pid_t *pid)
+void My_pid_reset_My(volatile My_pid_t *pid)
 {
   if (pid == 0)
   {
@@ -77,7 +77,7 @@ void codex_pid_reset_codex(volatile codex_pid_t *pid)
   pid->output = 0.0f;
 }
 
-float codex_pid_calc_position_codex(volatile codex_pid_t *pid, float target, float actual)
+float My_pid_calc_position_My(volatile My_pid_t *pid, float target, float actual)
 {
   if (pid == 0)
   {
@@ -86,18 +86,18 @@ float codex_pid_calc_position_codex(volatile codex_pid_t *pid, float target, flo
 
   pid->error = target - actual;
   pid->integral += pid->error;
-  pid->integral = codex_pid_limit_codex(pid->integral, pid->integral_limit);
+  pid->integral = My_pid_limit_My(pid->integral, pid->integral_limit);
   pid->output = pid->kp * pid->error
               + pid->ki * pid->integral
               + pid->kd * (pid->error - pid->last_error);
-  pid->output = codex_pid_limit_codex(pid->output, pid->output_limit);
+  pid->output = My_pid_limit_My(pid->output, pid->output_limit);
   pid->prev_error = pid->last_error;
   pid->last_error = pid->error;
 
   return pid->output;
 }
 
-float codex_pid_calc_angle_codex(volatile codex_pid_t *pid, float target, float actual)
+float My_pid_calc_angle_My(volatile My_pid_t *pid, float target, float actual)
 {
   float error; /* 折算到 -180 到 180 度范围内的角度误差。 */
 
@@ -118,18 +118,18 @@ float codex_pid_calc_angle_codex(volatile codex_pid_t *pid, float target, float 
 
   pid->error = error;
   pid->integral += pid->error;
-  pid->integral = codex_pid_limit_codex(pid->integral, pid->integral_limit);
+  pid->integral = My_pid_limit_My(pid->integral, pid->integral_limit);
   pid->output = pid->kp * pid->error
               + pid->ki * pid->integral
               + pid->kd * (pid->error - pid->last_error);
-  pid->output = codex_pid_limit_codex(pid->output, pid->output_limit);
+  pid->output = My_pid_limit_My(pid->output, pid->output_limit);
   pid->prev_error = pid->last_error;
   pid->last_error = pid->error;
 
   return pid->output;
 }
 
-float codex_pid_calc_incremental_codex(volatile codex_pid_t *pid,
+float My_pid_calc_incremental_My(volatile My_pid_t *pid,
                                        float target,
                                        float actual,
                                        float target_limit)
@@ -139,12 +139,12 @@ float codex_pid_calc_incremental_codex(volatile codex_pid_t *pid,
     return 0.0f;
   }
 
-  target = codex_pid_limit_codex(target, target_limit);
+  target = My_pid_limit_My(target, target_limit);
   pid->error = target - actual;
   pid->output += pid->kp * (pid->error - pid->last_error)
                + pid->ki * pid->error
                + pid->kd * (pid->error - 2.0f * pid->last_error + pid->prev_error);
-  pid->output = codex_pid_limit_codex(pid->output, pid->output_limit);
+  pid->output = My_pid_limit_My(pid->output, pid->output_limit);
   pid->prev_error = pid->last_error;
   pid->last_error = pid->error;
 

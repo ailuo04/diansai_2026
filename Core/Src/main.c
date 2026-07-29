@@ -25,9 +25,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "codex_hwt101_iic.h"
-#include "codex_move.h"
-#include "codex_uart.h"
+#include "My_hwt101_iic.h"
+#include "My_move.h"
+#include "My_uart.h"
+#include "My_oled.h"
 #include <stdio.h>
 
 /* USER CODE END Includes */
@@ -95,25 +96,31 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_TIM8_Init();
-  MX_TIM1_Init();
-  MX_TIM2_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(USART2_IRQn);
-  if (codex_uart_init_codex() != HAL_OK)
+  if (My_uart_init_My() != HAL_OK)
   {
     Error_Handler();
   }
-  codex_hwt101_iic_init_codex();
-  if (codex_move_init_codex() != HAL_OK)
+  My_hwt101_iic_init_My();
+  if (My_oled_init_My() == HAL_OK)
+  {
+    My_oled_set_cursor_My(0U, 0U);
+    My_oled_write_string_My("OLED OK");
+    printf("OLED ACK: 0x%02X\r\n", My_oled_get_address_My());
+  }
+  else
+  {
+    printf("OLED NACK: check PF3/PF4, power and address\r\n");
+  }
+  if (My_move_init_My() != HAL_OK)
   {
     Error_Handler();
   }
   printf("USART2 ready\r\n");
-
+	My_oled_write_string_My("角度：");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -123,7 +130,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    codex_uart_poll_codex();
+    My_uart_poll_My();
   }
   /* USER CODE END 3 */
 }
