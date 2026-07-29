@@ -623,6 +623,16 @@
               <FileType>1</FileType>
               <FilePath>../Hardware/Src/My_move.c</FilePath>
             </File>
+            <File>
+              <FileName>My_gray.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_gray.c</FilePath>
+            </File>
+            <File>
+              <FileName>My_key.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_key.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

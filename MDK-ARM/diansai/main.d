@@ -1,4 +1,4 @@
-diansai/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
+./diansai/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal.h \
   ..\Core\Inc\stm32f4xx_hal_conf.h \
   ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_rcc.h \
@@ -20,4 +20,12 @@ diansai/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_flash_ramfunc.h \
   ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_pwr.h \
   ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_pwr_ex.h \
-  ..\Core\Inc\gpio.h
+  ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_tim.h \
+  ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_tim_ex.h \
+  ..\Drivers\STM32F4xx_HAL_Driver\Inc\stm32f4xx_hal_uart.h \
+  ..\Core\Inc\dma.h ..\Core\Inc\tim.h ..\Core\Inc\usart.h \
+  ..\Core\Inc\gpio.h ..\Hardware\Inc\HWT101.h ..\Hardware\Inc\IIC.h \
+  ..\Hardware\Inc\My_move.h ..\Hardware\Inc\My_pid.h \
+  ..\Hardware\Inc\My_uart.h ..\Hardware\Inc\My_oled.h \
+  ..\Hardware\Inc\My_gray.h ..\Hardware\Inc\My_key.h \
+  ..\Hardware\Inc\My_timer.h

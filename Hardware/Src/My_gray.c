@@ -1,0 +1,200 @@
+﻿#include "My_gray.h"
+#include "main.h"
+#include "My_move.h"
+
+volatile My_gray_pid_control_t My_gray_pid_control_My; /* 灰度循迹参数和运行状态，可在调试器中观察。 */
+
+static const int8_t My_gray_position_weight_My[8] =
+{
+  -7, -5, -3, -1, 1, 3, 5, 7
+}; /* 从 Gray_1 到 Gray_8 的位置权重。 */
+
+/**
+  * @brief 将浮点值限制在 0 到电机最大 PWM 范围内。
+  * @param value 原始限幅值
+  * @retval 限幅后的值
+  */
+static float My_gray_limit_correction_My(float value)
+{
+  if (value < 0.0f)
+  {
+    return 0.0f;
+  }
+  if (value > (float)MY_MOVE_PWM_MAX)
+  {
+    return (float)MY_MOVE_PWM_MAX;
+  }
+
+  return value;
+}
+
+/**
+  * @brief 读取 8 路灰度传感器的原始数字电平。
+  * @retval 8 路电平组成的位图；Gray_1 为最高位，Gray_8 为最低位
+  * @note GPIO 高电平对应位值 1，低电平对应位值 0。
+  */
+uint8_t My_gray_read_My(void)
+{
+  uint8_t gray_value = 0U; /* 保存从左到右排列的 8 路原始电平。 */
+
+  if (HAL_GPIO_ReadPin(Gray_1_GPIO_Port, Gray_1_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_1_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_2_GPIO_Port, Gray_2_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_2_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_3_GPIO_Port, Gray_3_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_3_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_4_GPIO_Port, Gray_4_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_4_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_5_GPIO_Port, Gray_5_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_5_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_6_GPIO_Port, Gray_6_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_6_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_7_GPIO_Port, Gray_7_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_7_MASK;
+  }
+  if (HAL_GPIO_ReadPin(Gray_8_GPIO_Port, Gray_8_Pin) == GPIO_PIN_SET)
+  {
+    gray_value |= MY_GRAY_8_MASK;
+  }
+
+  return gray_value;
+}
+
+void My_gray_pid_init_My(void)
+{
+  My_pid_init_My(&My_gray_pid_control_My.pid,
+                 20.0f,
+                 0.0f,
+                 0.0f,
+                 100.0f,
+                 MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT);
+  My_gray_pid_control_My.base_pwm = MY_GRAY_PID_DEFAULT_BASE_PWM;
+  My_gray_pid_control_My.correction_limit = MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT;
+  My_gray_pid_control_My.error = 0.0f;
+  My_gray_pid_control_My.correction = 0.0f;
+  My_gray_pid_control_My.raw_value = 0U;
+  My_gray_pid_control_My.line_detected = 0U;
+  My_gray_pid_control_My.active_level = MY_GRAY_PID_DEFAULT_ACTIVE_LEVEL;
+  My_gray_pid_control_My.steering_direction = 1;
+  My_gray_pid_control_My.enabled = 0U;
+}
+
+void My_gray_pid_set_parameters_My(float kp, float ki, float kd)
+{
+  My_pid_init_My(&My_gray_pid_control_My.pid,
+                 kp,
+                 ki,
+                 kd,
+                 100.0f,
+                 My_gray_pid_control_My.correction_limit);
+}
+
+void My_gray_pid_set_motion_My(int16_t base_pwm, float correction_limit)
+{
+  if (base_pwm < 0)
+  {
+    base_pwm = 0;
+  }
+  if (base_pwm > MY_MOVE_PWM_MAX)
+  {
+    base_pwm = MY_MOVE_PWM_MAX;
+  }
+
+  My_gray_pid_control_My.base_pwm = base_pwm;
+  My_gray_pid_control_My.correction_limit = My_gray_limit_correction_My(correction_limit);
+  My_gray_pid_control_My.pid.output_limit = My_gray_pid_control_My.correction_limit;
+}
+
+void My_gray_pid_set_active_level_My(uint8_t active_level)
+{
+  My_gray_pid_control_My.active_level = (active_level != 0U) ? 1U : 0U;
+}
+
+void My_gray_pid_set_steering_direction_My(int8_t direction)
+{
+  My_gray_pid_control_My.steering_direction = (direction < 0) ? -1 : 1;
+}
+
+void My_gray_pid_start_My(void)
+{
+  My_pid_reset_My(&My_gray_pid_control_My.pid);
+  My_gray_pid_control_My.enabled = 1U;
+}
+
+void My_gray_pid_stop_My(void)
+{
+  My_gray_pid_control_My.enabled = 0U;
+  My_gray_pid_control_My.line_detected = 0U;
+  My_gray_pid_control_My.correction = 0.0f;
+  My_pid_reset_My(&My_gray_pid_control_My.pid);
+  My_move_stop_My();
+}
+
+void My_gray_pid_update_My(void)
+{
+  uint8_t active_value; /* 将检测到线统一换算为位值 1 后的灰度位图。 */
+  uint8_t gray_index;   /* 当前处理的灰度通道索引。 */
+  uint8_t active_count = 0U; /* 当前检测到线的通道数量。 */
+  int16_t weighted_sum = 0;  /* 所有有效通道的位置权重之和。 */
+  float correction;          /* PID 计算后的转向修正量。 */
+
+  My_gray_pid_control_My.raw_value = My_gray_read_My();
+  active_value = (My_gray_pid_control_My.active_level != 0U)
+                   ? My_gray_pid_control_My.raw_value
+                   : (uint8_t)(~My_gray_pid_control_My.raw_value);
+
+  for (gray_index = 0U; gray_index < 8U; gray_index++)
+  {
+    if ((active_value & (uint8_t)(MY_GRAY_1_MASK >> gray_index)) != 0U)
+    {
+      weighted_sum += My_gray_position_weight_My[gray_index];
+      active_count++;
+    }
+  }
+
+  if (My_gray_pid_control_My.enabled == 0U)
+  {
+    return;
+  }
+
+  if (active_count == 0U)
+  {
+    /*
+     * 当前采样未检测到黑线，只更新丢线状态并保持上一周期的误差、PID 状态和
+     * 四轮 PWM 输出。这样车辆会沿最后一次有效修正方向继续运动，直到传感器
+     * 再次检测到黑线后恢复位置计算。首次启动前电机已由运动模块保持停止，
+     * 因此尚无有效循迹输出时进入本分支不会产生新的运动指令。
+     *
+     * 此策略不设置丢线超时：传感器持续故障时车辆会持续执行最后指令，实车
+     * 使用时必须依靠人工急停或上层任务状态机终止运动。
+     */
+    My_gray_pid_control_My.line_detected = 0U;
+    return;
+  }
+
+  My_gray_pid_control_My.line_detected = 1U;
+  My_gray_pid_control_My.error = (float)weighted_sum / (float)active_count;
+  correction = My_pid_calc_position_My(&My_gray_pid_control_My.pid,
+                                       0.0f,
+                                       My_gray_pid_control_My.error);
+  correction *= (float)My_gray_pid_control_My.steering_direction;
+  My_gray_pid_control_My.correction = correction;
+
+  My_move_mecanum_inverse_My((float)My_gray_pid_control_My.base_pwm,
+                             0.0f,
+                             correction);
+  My_move_velocity_pid_update_My();
+}

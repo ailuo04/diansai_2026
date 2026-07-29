@@ -38,7 +38,6 @@
         * Output
         * EVENT_OUT
         * EXTI
-     PA15   ------> S_TIM2_CH1_ETR
 */
 void MX_GPIO_Init(void)
 {
@@ -50,25 +49,26 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOF, OLED_SCK_Pin|OLED_SDA_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOF, OLED_SCK_Pin|OLED_SDA_Pin|MOTOR_3A_Pin|MOTOR_3B_Pin
+                          |MOTOR_4A_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, HWT101_SCL_Pin|HWT101_SDA_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_5|Move_3B_Pin|Move_4A_Pin|Move_3A_Pin
-                          |Move_1A_Pin|Move_1B_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOG, MOTOR_4B_Pin|MOTOR_1A_Pin|MOTOR_2A_Pin|MOTOR_1B_Pin
+                          |MOTOR_2B_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, Move_2B_Pin|Move_2A_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : OLED_SCK_Pin OLED_SDA_Pin */
-  GPIO_InitStruct.Pin = OLED_SCK_Pin|OLED_SDA_Pin;
+  /*Configure GPIO pins : OLED_SCK_Pin OLED_SDA_Pin MOTOR_3A_Pin MOTOR_3B_Pin
+                           MOTOR_4A_Pin */
+  GPIO_InitStruct.Pin = OLED_SCK_Pin|OLED_SDA_Pin|MOTOR_3A_Pin|MOTOR_3B_Pin
+                          |MOTOR_4A_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -81,29 +81,44 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PG5 Move_3B_Pin Move_4A_Pin Move_3A_Pin
-                           Move_1A_Pin Move_1B_Pin */
-  GPIO_InitStruct.Pin = GPIO_PIN_5|Move_3B_Pin|Move_4A_Pin|Move_3A_Pin
-                          |Move_1A_Pin|Move_1B_Pin;
+  /*Configure GPIO pins : MOTOR_4B_Pin MOTOR_1A_Pin MOTOR_2A_Pin MOTOR_1B_Pin
+                           MOTOR_2B_Pin */
+  GPIO_InitStruct.Pin = MOTOR_4B_Pin|MOTOR_1A_Pin|MOTOR_2A_Pin|MOTOR_1B_Pin
+                          |MOTOR_2B_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  /*Configure GPIO pin : Key_Pin */
+  GPIO_InitStruct.Pin = Key_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(Key_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Move_2B_Pin Move_2A_Pin */
-  GPIO_InitStruct.Pin = Move_2B_Pin|Move_2A_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  /*Configure GPIO pins : Gray_1_Pin Gray_2_Pin */
+  GPIO_InitStruct.Pin = Gray_1_Pin|Gray_2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Gray_3_Pin Gray_4_Pin Gray_5_Pin */
+  GPIO_InitStruct.Pin = Gray_3_Pin|Gray_4_Pin|Gray_5_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Gray_6_Pin Gray_7_Pin */
+  GPIO_InitStruct.Pin = Gray_6_Pin|Gray_7_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Gray_8_Pin */
+  GPIO_InitStruct.Pin = Gray_8_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(Gray_8_GPIO_Port, &GPIO_InitStruct);
 
 }
 

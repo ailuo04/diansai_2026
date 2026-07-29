@@ -387,7 +387,9 @@ __weak void My_uart_rx_frame_callback_My(const uint8_t *data, uint16_t length)
   * @details 该回调运行在中断上下文中，只做“尽快搬运和置位”，
   *          不做耗时业务处理。处理完成后会立即重新启动下一轮接收。
   *          若四槽环形帧队列已满，则会用最新一帧覆盖当前最旧帧，
-  *          以优先保证数据实时性。
+  *          以优先保证数据实时性。该函数与主循环共享帧队列计数、队首和
+  *          溢出标志，这些字段必须保持 volatile 且仅执行自然宽度原子访问。
+  *          中断内禁止等待、打印、动态分配或直接解析业务协议。
   * @param huart 触发本次回调的 UART 句柄指针；本实现只处理 `USART3`
   * @param Size 本次从 DMA 缓冲区中判定为“有效接收”的字节数
   */
@@ -396,19 +398,23 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
   uint16_t copy_length;
   uint8_t write_index;
 
+  /* HAL 回调为所有 UART 共用；非 USART3 事件不属于本驱动，必须无副作用返回。 */
   if (huart->Instance != USART3)
   {
     return;
   }
 
+  /* Size 为本轮 DMA 接收到的有效长度；空事件不入队，但仍需在末尾重启接收。 */
   if (Size > 0U)
   {
+    /* 限制复制长度，防止异常 Size 越过 DMA 缓冲区，并锁存数据截断诊断标志。 */
     copy_length = (Size > MY_UART_RX_BUFFER_SIZE) ? MY_UART_RX_BUFFER_SIZE : Size;
     if (Size > MY_UART_RX_BUFFER_SIZE)
     {
       My_uart_rx_overflow = 1U;
     }
 
+    /* 队列未满时在队尾写入，新帧写完长度后再增加计数，避免主循环读到半帧。 */
     if (My_uart_rx_queue_count < MY_UART_RX_FRAME_QUEUE_SIZE)
     {
       write_index = (uint8_t)(My_uart_rx_queue_head + My_uart_rx_queue_count);
@@ -423,6 +429,10 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     }
     else
     {
+      /*
+       * 队列已满时覆盖最旧帧并推进队首，队列数量保持不变；该策略会丢弃
+       * 一帧历史数据，因此同时置位溢出标志供主循环诊断。
+       */
       write_index = My_uart_rx_queue_head;
       memcpy(My_uart_rx_frame_queue[write_index], My_uart_rx_dma_buffer, copy_length);
       My_uart_rx_frame_lengths[write_index] = copy_length;
@@ -431,6 +441,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     }
   }
 
+  /* 每次事件后重新挂载 DMA 空闲接收；失败仅锁存标志，等待主循环决定恢复策略。 */
   if (My_uart_restart_receive_My() != HAL_OK)
   {
     My_uart_rx_restart_error = 1U;
@@ -440,6 +451,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 /**
   * @brief USART3 DMA 发送完成回调。
   * @details 释放本次已发送区域，并立即启动环形缓冲区中的下一段数据。
+  *          本函数与主循环共享发送队首、待发计数和 DMA 长度，更新时短暂
+  *          关闭中断形成临界区；禁止在临界区内等待、打印或调用阻塞接口。
   * @param huart 触发本次回调的 UART 句柄指针
   */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
@@ -447,14 +460,20 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
   uint32_t primask;
   uint16_t completed_length;
 
+  /* 忽略其他 UART 的发送完成事件，防止误推进 USART3 环形缓冲区。 */
   if (huart->Instance != USART3)
   {
     return;
   }
 
+  /* 保存进入回调前的全局中断状态，临界区结束后按原状态恢复，避免误开启中断。 */
   primask = __get_PRIMASK();
   __disable_irq();
 
+  /*
+   * 读取本次 DMA 长度并释放对应队首区域。正常路径推进队首、减少待发计数；
+   * 若长度超过队列计数，说明状态损坏，清空队列并锁存错误以阻止越界访问。
+   */
   completed_length = My_uart_tx_dma_length;
   if (completed_length > 0U && completed_length <= My_uart_tx_count)
   {
@@ -473,7 +492,9 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
   }
   My_uart_tx_dma_length = 0U;
 
+  /* 环形队列状态已一致，恢复原中断状态后再启动下一段，缩短全局关中断时间。 */
   My_uart_restore_irq_My(primask);
+  /* 非阻塞启动下一段连续数据；失败时锁存错误，由后续轮询继续尝试恢复。 */
   if (My_uart_start_transmit_My() != HAL_OK)
   {
     My_uart_tx_error = 1U;
@@ -482,16 +503,25 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 
 /**
   * @brief USART3 错误回调，发生错误后尝试恢复 DMA 收发。
+  * @details 回调运行于中断上下文，只复位必要状态并重新挂载非阻塞 DMA。
+  *          它会修改与主循环共享的收发错误标志和当前 DMA 长度；禁止在此处
+  *          打印错误、延时或执行协议解析，否则会延长 USART3 中断占用时间。
   * @param huart 发生错误的 UART 句柄指针；本实现只处理 `USART3`
   */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+  /* HAL 错误回调为所有 UART 共用，非 USART3 错误不改变本驱动状态。 */
   if (huart->Instance != USART3)
   {
     return;
   }
 
+  /* 统一锁存接收异常，提示本轮数据可能不完整或已经丢失。 */
   My_uart_rx_overflow = 1U;
+  /*
+   * 若 HAL 已回到发送就绪态但软件仍记录在途 DMA，说明该段发送被错误中止；
+   * 清除在途长度并重新启动队首数据，保留待发计数以避免静默丢包。
+   */
   if (My_uart_tx_dma_length != 0U && huart->gState == HAL_UART_STATE_READY)
   {
     My_uart_tx_dma_length = 0U;
@@ -501,6 +531,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
       My_uart_tx_error = 1U;
     }
   }
+  /* 无论错误来源为何都重新挂载接收 DMA；失败时锁存恢复错误供主循环诊断。 */
   if (My_uart_restart_receive_My() != HAL_OK)
   {
     My_uart_rx_restart_error = 1U;

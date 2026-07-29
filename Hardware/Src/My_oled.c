@@ -3,9 +3,11 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 #define MY_OLED_I2C_DELAY 200U
 #define MY_OLED_PIXEL_WIDTH 128U
+#define MY_OLED_COLUMN_OFFSET 2U
 #define MY_OLED_FORMAT_BUFFER_SIZE 128U
 #define MY_OLED_GB2312_FLASH_ADDRESS 0x080C0000UL
 #define MY_OLED_GB2312_FONT_MAGIC 0x32334247UL
@@ -51,6 +53,11 @@ typedef char My_oled_entry_size_check_My[
 static uint8_t My_oled_page_My;
 static uint8_t My_oled_column_My;
 static uint8_t My_oled_address_My;
+static uint8_t My_oled_page_cache_My[8][MY_OLED_PIXEL_WIDTH]; /* 保存已写入各页的显示数据。 */
+static const uint8_t My_oled_degree_8x16_My[16] = {
+  0x00U,0x0CU,0x12U,0x12U,0x12U,0x0CU,0x00U,0x00U,
+  0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U
+}; /* 8x16 角度符号，上页显示空心圆，下页留空。 */
 
 /* 仅保留常用数字、大写字母和标点，未知字符显示为空格。 */
 static const uint8_t My_oled_font_My[39][5] = {
@@ -221,9 +228,8 @@ HAL_StatusTypeDef My_oled_init_My(void)
   static const uint8_t init_commands[] = {
     0xAEU,0xD5U,0x80U,0xA8U,0x3FU,0xD3U,0x00U,0x40U,
     0x8DU,0x14U,0x20U,0x02U,0xA1U,0xC8U,0xDAU,0x12U,
-    0x81U,0x7FU,0xD9U,0xF1U,0xDBU,0x40U,0xA4U,0xA6U,0xAFU
+    0x81U,0x7FU,0xD9U,0xF1U,0xDBU,0x40U,0xA4U,0xA6U
   };
-  uint16_t command_index;
 
   __HAL_RCC_GPIOF_CLK_ENABLE();
   gpio_init.Pin = MY_OLED_SCL_PIN | MY_OLED_SDA_PIN;
@@ -233,9 +239,15 @@ HAL_StatusTypeDef My_oled_init_My(void)
   HAL_GPIO_Init(MY_OLED_SCL_PORT, &gpio_init);
   My_oled_scl_My(1U);
   My_oled_sda_My(1U);
+
+  /* MCU 单独复位时 OLED 仍可能处于开启状态，先尝试关闭两个常见地址。 */
+  My_oled_address_My = MY_OLED_I2C_ADDRESS_LOW;
+  (void)My_oled_command_My(0xAEU);
+  My_oled_address_My = MY_OLED_I2C_ADDRESS_HIGH;
+  (void)My_oled_command_My(0xAEU);
+  My_oled_address_My = 0U;
   HAL_Delay(100U);
 
-  My_oled_address_My = 0U;
   My_oled_recover_bus_My();
   if (My_oled_probe_address_My(MY_OLED_I2C_ADDRESS_LOW) == HAL_OK)
   {
@@ -250,15 +262,17 @@ HAL_StatusTypeDef My_oled_init_My(void)
     return HAL_ERROR;
   }
 
-  for (command_index = 0U; command_index < sizeof(init_commands); command_index++)
+  if (My_oled_write_bytes_My(0x00U, init_commands, sizeof(init_commands)) != HAL_OK)
   {
-    if (My_oled_command_My(init_commands[command_index]) != HAL_OK)
-    {
-      My_oled_address_My = 0U;
-      return HAL_ERROR;
-    }
+    My_oled_address_My = 0U;
+    return HAL_ERROR;
   }
   My_oled_clear_My();
+  if (My_oled_command_My(0xAFU) != HAL_OK)
+  {
+    My_oled_address_My = 0U;
+    return HAL_ERROR;
+  }
   return HAL_OK;
 }
 
@@ -271,19 +285,41 @@ uint8_t My_oled_get_address_My(void)
   return My_oled_address_My;
 }
 
+/**
+  * @brief 设置 OLED 页地址和可视区列地址。
+  * @param page 页地址，范围为 0~7
+  * @param column 可视区列地址，范围为 0~127
+  */
 void My_oled_set_cursor_My(uint8_t page, uint8_t column)
 {
-  My_oled_page_My = page & 0x07U; My_oled_column_My = column & 0x7FU;
-  My_oled_command_My((uint8_t)(0xB0U | My_oled_page_My));
-  My_oled_command_My((uint8_t)(0x00U | (My_oled_column_My & 0x0FU)));
-  My_oled_command_My((uint8_t)(0x10U | (My_oled_column_My >> 4U)));
+  uint8_t commands[3]; /* 页地址、列低四位和列高四位命令。 */
+  uint8_t ram_column; /* SH1106 的 128 列可视区从 132 列显存的第 2 列开始。 */
+
+  My_oled_page_My = page & 0x07U;
+  My_oled_column_My = column & 0x7FU;
+  ram_column = (uint8_t)(My_oled_column_My + MY_OLED_COLUMN_OFFSET);
+  commands[0] = (uint8_t)(0xB0U | My_oled_page_My);
+  commands[1] = (uint8_t)(0x00U | (ram_column & 0x0FU));
+  commands[2] = (uint8_t)(0x10U | (ram_column >> 4U));
+  (void)My_oled_write_bytes_My(0x00U, commands, sizeof(commands));
 }
 
+/**
+  * @brief 清空 OLED 可视区并同步页缓存。
+  */
 void My_oled_clear_My(void)
 {
-  uint8_t blank[128]; uint8_t page; uint16_t index;
-  for (index = 0U; index < sizeof(blank); index++) { blank[index] = 0U; }
-  for (page = 0U; page < 8U; page++) { My_oled_set_cursor_My(page, 0U); My_oled_write_bytes_My(0x40U, blank, sizeof(blank)); }
+  uint8_t blank[MY_OLED_PIXEL_WIDTH] = {0U};
+  uint8_t page;
+
+  for (page = 0U; page < 8U; page++)
+  {
+    My_oled_set_cursor_My(page, 0U);
+    if (My_oled_write_bytes_My(0x40U, blank, sizeof(blank)) == HAL_OK)
+    {
+      memset(My_oled_page_cache_My[page], 0, MY_OLED_PIXEL_WIDTH);
+    }
+  }
   My_oled_set_cursor_My(0U, 0U);
 }
 
@@ -291,12 +327,18 @@ void My_oled_write_char_My(char value)
 {
   uint8_t glyph[6] = {0U,0U,0U,0U,0U,0U};
   uint8_t index;
+  uint8_t start_column = My_oled_column_My; /* 当前字符写入前的逻辑列。 */
   if (value >= '0' && value <= '9') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[value - '0'][index]; } }
   else if (value >= 'A' && value <= 'Z') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[10U + value - 'A'][index]; } }
   else if (value == ':') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[36U][index]; } }
   else if (value == '-') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[37U][index]; } }
   else if (value == '.') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[38U][index]; } }
-  My_oled_write_bytes_My(0x40U, glyph, sizeof(glyph));
+  if ((uint16_t)start_column + sizeof(glyph) <= MY_OLED_PIXEL_WIDTH &&
+      My_oled_write_bytes_My(0x40U, glyph, sizeof(glyph)) == HAL_OK)
+  {
+    memcpy(&My_oled_page_cache_My[My_oled_page_My][start_column],
+           glyph, sizeof(glyph));
+  }
   My_oled_column_My = (uint8_t)(My_oled_column_My + 6U);
   if (My_oled_column_My > 122U) { My_oled_column_My = 0U; My_oled_page_My = (uint8_t)((My_oled_page_My + 1U) & 0x07U); My_oled_set_cursor_My(My_oled_page_My, 0U); }
 }
@@ -393,29 +435,6 @@ static const uint8_t *My_oled_find_gb2312_glyph_My(uint32_t codepoint)
 }
 
 /**
-  * @brief 在指定 OLED 页和像素列写入一个 16 像素高的字模。
-  * @param page 字模上半部分所在页，范围为 0、2、4、6
-  * @param pixel_column 起始像素列
-  * @param bitmap 上下两页连续存放的字模数据
-  * @param width 字模宽度，ASCII 为 8，中文为 16
-  * @retval HAL 状态
-  */
-static HAL_StatusTypeDef My_oled_write_glyph_16_My(uint8_t page,
-                                                    uint8_t pixel_column,
-                                                    const uint8_t *bitmap,
-                                                    uint8_t width)
-{
-  My_oled_set_cursor_My(page, pixel_column);
-  if (My_oled_write_bytes_My(0x40U, bitmap, width) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-
-  My_oled_set_cursor_My((uint8_t)(page + 1U), pixel_column);
-  return My_oled_write_bytes_My(0x40U, &bitmap[width], width);
-}
-
-/**
   * @brief 从指定字符位置开始显示 UTF-8 字符串，支持 ASCII 与完整 GB2312 字符集。
   * @param row 显示行，范围为 1~4
   * @param column 半角字符列，范围为 1~16；中文字符占两列
@@ -424,8 +443,11 @@ static HAL_StatusTypeDef My_oled_write_glyph_16_My(uint8_t page,
 void My_oled_write_string_at_My(uint8_t row, uint8_t column, const char *text)
 {
   const uint8_t *cursor = (const uint8_t *)text; /* 当前待解析的 UTF-8 字节位置。 */
+  uint8_t line_buffer[2][MY_OLED_PIXEL_WIDTH] = {{0U}}; /* 当前文本行的上下两页。 */
   uint8_t page;                                  /* 当前文本行对应的 OLED 起始页。 */
   uint8_t pixel_column;                          /* 当前字符的起始像素列。 */
+  uint8_t start_column;                          /* 本次允许更新的首列。 */
+  uint8_t page_offset;                           /* 当前处理上页或下页。 */
 
   if (row == 0U || row > MY_OLED_ROW_COUNT ||
       column == 0U || column > MY_OLED_CHARACTER_COLUMN_COUNT ||
@@ -436,6 +458,7 @@ void My_oled_write_string_at_My(uint8_t row, uint8_t column, const char *text)
 
   page = (uint8_t)((row - 1U) * 2U);
   pixel_column = (uint8_t)((column - 1U) * MY_OLED_CHARACTER_WIDTH);
+  start_column = pixel_column;
   while (*cursor != '\0')
   {
     const uint8_t *bitmap; /* 当前字符需要写入 OLED 的字模地址。 */
@@ -444,7 +467,12 @@ void My_oled_write_string_at_My(uint8_t row, uint8_t column, const char *text)
     uint8_t width;         /* 当前字符占用的像素宽度。 */
 
     consumed = My_oled_decode_utf8_My(cursor, &codepoint);
-    if (codepoint >= 0x20U && codepoint <= 0x7EU)
+    if (codepoint == 0x00B0U)
+    {
+      bitmap = My_oled_degree_8x16_My;
+      width = 8U;
+    }
+    else if (codepoint >= 0x20U && codepoint <= 0x7EU)
     {
       bitmap = My_oled_ascii_8x16_My[codepoint - 0x20U];
       width = 8U;
@@ -464,13 +492,47 @@ void My_oled_write_string_at_My(uint8_t row, uint8_t column, const char *text)
     {
       break;
     }
-    if (My_oled_write_glyph_16_My(page, pixel_column, bitmap, width) != HAL_OK)
-    {
-      break;
-    }
+    memcpy(&line_buffer[0][pixel_column], bitmap, width);
+    memcpy(&line_buffer[1][pixel_column], &bitmap[width], width);
 
     pixel_column = (uint8_t)(pixel_column + width);
     cursor += consumed;
+  }
+
+  /* 每页只发送首尾变化列之间的数据，未变化的文本不会占用总线。 */
+  for (page_offset = 0U; page_offset < 2U; page_offset++)
+  {
+    uint8_t first_changed = start_column; /* 当前页第一处变化列。 */
+    uint8_t last_changed = (uint8_t)(MY_OLED_PIXEL_WIDTH - 1U); /* 当前页最后一处变化列。 */
+    uint8_t target_page = (uint8_t)(page + page_offset); /* 实际 OLED 页地址。 */
+
+    while (first_changed < MY_OLED_PIXEL_WIDTH &&
+           line_buffer[page_offset][first_changed] ==
+             My_oled_page_cache_My[target_page][first_changed])
+    {
+      first_changed++;
+    }
+    if (first_changed >= MY_OLED_PIXEL_WIDTH)
+    {
+      continue;
+    }
+    while (last_changed > first_changed &&
+           line_buffer[page_offset][last_changed] ==
+             My_oled_page_cache_My[target_page][last_changed])
+    {
+      last_changed--;
+    }
+
+    My_oled_set_cursor_My(target_page, first_changed);
+    if (My_oled_write_bytes_My(
+          0x40U,
+          &line_buffer[page_offset][first_changed],
+          (uint16_t)last_changed - first_changed + 1U) == HAL_OK)
+    {
+      memcpy(&My_oled_page_cache_My[target_page][first_changed],
+             &line_buffer[page_offset][first_changed],
+             (size_t)((uint16_t)last_changed - first_changed + 1U));
+    }
   }
 }
 
