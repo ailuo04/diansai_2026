@@ -624,6 +624,16 @@
               <FilePath>../Hardware/Src/My_move.c</FilePath>
             </File>
             <File>
+              <FileName>My_encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>My_steering.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_steering.c</FilePath>
+            </File>
+            <File>
               <FileName>My_gray.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/Src/My_gray.c</FilePath>
@@ -632,6 +642,11 @@
               <FileName>My_key.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/Src/My_key.c</FilePath>
+            </File>
+            <File>
+              <FileName>My_app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_app.c</FilePath>
             </File>
           </Files>
         </Group>

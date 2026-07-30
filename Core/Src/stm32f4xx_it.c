@@ -273,11 +273,21 @@ void USART3_IRQHandler(void)
 void TIM6_DAC_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM6_DAC_IRQn 0 */
-
+  /*
+   * 中断来源为 TIM6 的 10 ms 更新事件；本工程未启用 DAC 欠载业务。HAL 处理函数
+   * 将读取并清除 TIM6 更新标志，再调用 main.c 中的 HAL_TIM_PeriodElapsedCallback。
+   * 回调会更新 volatile 编码器调试数据、转向位置环、灰度 PID 状态和电机输出；
+   * 任务 2 完成反向制动并清零电机输出后，还会冻结与主循环共享的任务计时状态。
+   * 计时模块以极短临界区读取多字段一致快照，其他共享多字段状态也不能假设跨字段
+   * 读取具有原子性。
+   */
   /* USER CODE END TIM6_DAC_IRQn 0 */
   HAL_TIM_IRQHandler(&htim6);
   /* USER CODE BEGIN TIM6_DAC_IRQn 1 */
-
+  /*
+   * HAL 已按规定顺序完成标志清除和周期回调。此处不追加延时、打印、动态分配、
+   * OLED/软件 I2C 等阻塞操作，确保总处理时间显著小于 10 ms 并及时退出中断。
+   */
   /* USER CODE END TIM6_DAC_IRQn 1 */
 }
 

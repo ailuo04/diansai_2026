@@ -16,10 +16,19 @@ extern "C" {
 #define MY_GRAY_6_MASK (0x04U)
 #define MY_GRAY_7_MASK (0x02U)
 #define MY_GRAY_8_MASK (0x01U)
+#define MY_GRAY_TRACK_MASK ((uint8_t)(MY_GRAY_4_MASK | MY_GRAY_5_MASK | MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK))
+#define MY_GRAY_STOP_LEFT_PATTERN ((uint8_t)(MY_GRAY_4_MASK | MY_GRAY_5_MASK | MY_GRAY_6_MASK))
+#define MY_GRAY_STOP_MIDDLE_PATTERN ((uint8_t)(MY_GRAY_5_MASK | MY_GRAY_6_MASK | MY_GRAY_7_MASK))
+#define MY_GRAY_STOP_RIGHT_PATTERN ((uint8_t)(MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK))
+#define MY_GRAY_STOP_CONFIRM_CYCLES 3U
 
 #define MY_GRAY_PID_DEFAULT_BASE_PWM         250
 #define MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT 300.0f
 #define MY_GRAY_PID_DEFAULT_ACTIVE_LEVEL     0U
+#define MY_GRAY_RAMP_TIME_MS                 1000U
+#define MY_GRAY_CONTROL_PERIOD_MS            10U
+#define MY_GRAY_REVERSE_BRAKE_PWM            120
+#define MY_GRAY_REVERSE_BRAKE_TIME_MS        50U
 
 typedef struct
 {
@@ -33,6 +42,11 @@ typedef struct
   uint8_t active_level;   /* 0 表示低电平检测到线，1 表示高电平检测到线。 */
   int8_t steering_direction; /* 转向方向，接线相反时设为 -1。 */
   uint8_t enabled;        /* 非零表示允许循迹控制电机。 */
+  uint8_t stop_confirm_count; /* 右侧五路中相邻三连黑的连续确认次数，用于过滤瞬时误判。 */
+  uint8_t reverse_brake_cycles; /* 停止线触发后剩余的反向制动周期数，仅由 10 ms 控制中断更新。 */
+  uint16_t ramp_step;     /* 当前 S 曲线步号，范围 0 到 MY_GRAY_RAMP_STEPS。 */
+  float ramp_start_pwm;   /* 本次启动加速曲线的起始基础 PWM。 */
+  float ramp_pwm;         /* 当前经过 S 曲线平滑后的基础 PWM。 */
 } My_gray_pid_control_t;
 
 extern volatile My_gray_pid_control_t My_gray_pid_control_My;
@@ -77,12 +91,12 @@ void My_gray_pid_set_active_level_My(uint8_t active_level);
 void My_gray_pid_set_steering_direction_My(int8_t direction);
 
 /**
-  * @brief 启动灰度循迹控制，启动时清空 PID 历史状态。
+  * @brief 启动灰度循迹控制，启动时清空 PID 历史状态并执行 S 型加速。
   */
 void My_gray_pid_start_My(void);
 
 /**
-  * @brief 停止灰度循迹控制并停止四个电机。
+  * @brief 立即停止灰度循迹并同步清零四轮电机输出，不执行 S 型减速。
   */
 void My_gray_pid_stop_My(void);
 

@@ -106,7 +106,7 @@ static void My_move_set_direction_My(uint8_t wheel, int16_t command)
 
   if (command == 0)
   {
-    /* TB6612 的 IN1=0、IN2=0 为滑行停止。 */
+    /* PWM 已在改向前拉低；TB6612 两路输出均为低电平，电机处于短路制动状态。 */
     pin_a = GPIO_PIN_RESET;
     pin_b = GPIO_PIN_RESET;
   }

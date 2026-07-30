@@ -75,6 +75,8 @@ void Error_Handler(void);
 #define MOTOR_4B_GPIO_Port GPIOG
 #define Key_Pin GPIO_PIN_1
 #define Key_GPIO_Port GPIOG
+#define Steering_1B_Pin GPIO_PIN_7
+#define Steering_1B_GPIO_Port GPIOE
 #define MOTOR_1A_Pin GPIO_PIN_4
 #define MOTOR_1A_GPIO_Port GPIOG
 #define MOTOR_2A_Pin GPIO_PIN_5
@@ -83,6 +85,8 @@ void Error_Handler(void);
 #define MOTOR_1B_GPIO_Port GPIOG
 #define MOTOR_2B_Pin GPIO_PIN_7
 #define MOTOR_2B_GPIO_Port GPIOG
+#define Steering_1A_Pin GPIO_PIN_0
+#define Steering_1A_GPIO_Port GPIOD
 #define Gray_1_Pin GPIO_PIN_6
 #define Gray_1_GPIO_Port GPIOD
 #define Gray_2_Pin GPIO_PIN_7

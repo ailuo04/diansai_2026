@@ -21,7 +21,7 @@ void My_timer_stop_My(void);
 
 /**
   * @brief 获取本次计时经过的时间。
-  * @retval 经过的毫秒数；未开始时返回 0，停止后返回冻结值
+  * @retval 经过的毫秒数；确认任务前未开始时返回 0，停止后返回冻结值
   */
 uint32_t My_timer_get_elapsed_ms_My(void);
 

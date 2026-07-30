@@ -50,9 +50,9 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOF, OLED_SCK_Pin|OLED_SDA_Pin|MOTOR_3A_Pin|MOTOR_3B_Pin
@@ -64,6 +64,12 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOG, MOTOR_4B_Pin|MOTOR_1A_Pin|MOTOR_2A_Pin|MOTOR_1B_Pin
                           |MOTOR_2B_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(Steering_1B_GPIO_Port, Steering_1B_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(Steering_1A_GPIO_Port, Steering_1A_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : OLED_SCK_Pin OLED_SDA_Pin MOTOR_3A_Pin MOTOR_3B_Pin
                            MOTOR_4A_Pin */
@@ -95,6 +101,20 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(Key_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Steering_1B_Pin */
+  GPIO_InitStruct.Pin = Steering_1B_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(Steering_1B_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Steering_1A_Pin */
+  GPIO_InitStruct.Pin = Steering_1A_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(Steering_1A_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : Gray_1_Pin Gray_2_Pin */
   GPIO_InitStruct.Pin = Gray_1_Pin|Gray_2_Pin;
