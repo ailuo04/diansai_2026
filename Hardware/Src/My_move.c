@@ -21,7 +21,7 @@ typedef struct
  * 实车验证表明板上 MOTOR_2 方向通道连接实际 1 号轮，MOTOR_1 方向通道连接
  * 实际 2 号轮，因此前两项按实际轮号交换；3、4 号轮保持 CubeMX 标号映射。
  */
-static const My_move_motor_config_t My_move_motor_config[MY_MOVE_WHEEL_COUNT] =
+static const My_move_motor_config_t My_move_motor_config[MY_MOVE_WHEEL_COUNT] = /* 四个实际轮号对应的方向引脚和正向电平配置表。 */
 {
   {MOTOR_2A_GPIO_Port, MOTOR_2A_Pin, MOTOR_2B_GPIO_Port, MOTOR_2B_Pin, GPIO_PIN_RESET},
   {MOTOR_1A_GPIO_Port, MOTOR_1A_Pin, MOTOR_1B_GPIO_Port, MOTOR_1B_Pin, GPIO_PIN_RESET},

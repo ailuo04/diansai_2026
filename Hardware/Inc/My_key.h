@@ -1,5 +1,5 @@
 ﻿#ifndef MY_KEY_H
-#define MY_KEY_H
+#define MY_KEY_H /* 防止按键接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {
@@ -8,8 +8,8 @@ extern "C" {
 #include "main.h"
 #include <stdint.h>
 
-#define MY_KEY_VALUE_MIN 2U
-#define MY_KEY_VALUE_MAX 6U
+#define MY_KEY_VALUE_MIN 2U /* 任务选择允许显示和确认的最小任务号。 */
+#define MY_KEY_VALUE_MAX 6U /* 任务选择允许显示和确认的最大任务号。 */
 
 typedef enum
 {

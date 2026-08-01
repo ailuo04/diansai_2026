@@ -1,5 +1,5 @@
 ﻿#ifndef MY_OLED_H
-#define MY_OLED_H
+#define MY_OLED_H /* 防止 OLED 显示接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {
@@ -9,11 +9,11 @@ extern "C" {
 #include <stdint.h>
 
 /* SSD1306 常见 128x64 模块的两个 7 位 I2C 地址。 */
-#define MY_OLED_I2C_ADDRESS_LOW  0x3CU
-#define MY_OLED_I2C_ADDRESS_HIGH 0x3DU
-#define MY_OLED_ROW_COUNT              4U
-#define MY_OLED_CHARACTER_COLUMN_COUNT 16U
-#define MY_OLED_CHARACTER_WIDTH        8U
+#define MY_OLED_I2C_ADDRESS_LOW  0x3CU /* SSD1306 模块常用的低位 7 位 I2C 地址。 */
+#define MY_OLED_I2C_ADDRESS_HIGH 0x3DU /* SSD1306 模块常用的高位 7 位 I2C 地址。 */
+#define MY_OLED_ROW_COUNT              4U  /* 采用 16 像素高字体时屏幕可显示的文本行数。 */
+#define MY_OLED_CHARACTER_COLUMN_COUNT 16U /* 128 像素宽屏幕可显示的半角字符列数。 */
+#define MY_OLED_CHARACTER_WIDTH        8U  /* 单个半角字符占用的水平像素数。 */
 
 /**
   * @brief 初始化 OLED，并自动探测 0x3C 和 0x3D 地址。

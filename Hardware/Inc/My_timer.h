@@ -1,5 +1,5 @@
 ﻿#ifndef MY_TIMER_H
-#define MY_TIMER_H
+#define MY_TIMER_H /* 防止任务计时接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {

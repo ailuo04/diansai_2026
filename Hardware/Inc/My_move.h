@@ -1,5 +1,5 @@
 ﻿#ifndef MY_MOVE_H
-#define MY_MOVE_H
+#define MY_MOVE_H /* 防止四轮运动控制接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {

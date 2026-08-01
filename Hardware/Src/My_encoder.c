@@ -74,3 +74,20 @@ void My_encoder_reset_My(void)
   My_encoder_debug_My.sample_count = 0U;
   My_encoder_debug_My.running = running;
 }
+
+int32_t My_encoder_get_total_count_My(void)
+{
+  return My_encoder_debug_My.total_count;
+}
+
+float My_encoder_count_to_output_angle_My(int32_t count)
+{
+  return (float)count / MY_ENCODER_COUNTS_PER_OUTPUT_DEGREE;
+}
+
+int32_t My_encoder_output_angle_to_count_My(float angle_deg)
+{
+  float count = angle_deg * MY_ENCODER_COUNTS_PER_OUTPUT_DEGREE; /* 保留小数用于最终四舍五入。 */
+
+  return (count >= 0.0f) ? (int32_t)(count + 0.5f) : (int32_t)(count - 0.5f);
+}

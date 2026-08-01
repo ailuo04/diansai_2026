@@ -2,29 +2,29 @@
 #include <stddef.h>
 
 #ifndef HWT101_SCL_Pin
-#define HWT101_SCL_Pin                   GPIO_PIN_0
+#define HWT101_SCL_Pin                   GPIO_PIN_0 /* 未由 CubeMX 定义时使用 PC0 作为软件 IIC 时钟引脚。 */
 #endif
 
 #ifndef HWT101_SCL_GPIO_Port
-#define HWT101_SCL_GPIO_Port             GPIOC
+#define HWT101_SCL_GPIO_Port             GPIOC /* 未由 CubeMX 定义时使用 GPIOC 作为软件 IIC 时钟端口。 */
 #endif
 
 #ifndef HWT101_SDA_Pin
-#define HWT101_SDA_Pin                   GPIO_PIN_1
+#define HWT101_SDA_Pin                   GPIO_PIN_1 /* 未由 CubeMX 定义时使用 PC1 作为软件 IIC 数据引脚。 */
 #endif
 
 #ifndef HWT101_SDA_GPIO_Port
-#define HWT101_SDA_GPIO_Port             GPIOC
+#define HWT101_SDA_GPIO_Port             GPIOC /* 未由 CubeMX 定义时使用 GPIOC 作为软件 IIC 数据端口。 */
 #endif
 
-#define MY_HWT101_IIC_SCL_PORT        HWT101_SCL_GPIO_Port
-#define MY_HWT101_IIC_SDA_PORT        HWT101_SDA_GPIO_Port
-#define MY_HWT101_IIC_SCL_PIN         HWT101_SCL_Pin
-#define MY_HWT101_IIC_SDA_PIN         HWT101_SDA_Pin
-#define MY_HWT101_IIC_DELAY_UNIT      160U
-#define MY_HWT101_IIC_ACK_TIMEOUT     250U
-#define MY_HWT101_ANGLE_SCALE         (180.0f / 32768.0f)
-#define MY_HWT101_GYRO_SCALE          (2000.0f / 32768.0f)
+#define MY_HWT101_IIC_SCL_PORT        HWT101_SCL_GPIO_Port /* HWT101 软件 IIC 时钟线对应的 GPIO 端口。 */
+#define MY_HWT101_IIC_SDA_PORT        HWT101_SDA_GPIO_Port /* HWT101 软件 IIC 数据线对应的 GPIO 端口。 */
+#define MY_HWT101_IIC_SCL_PIN         HWT101_SCL_Pin       /* HWT101 软件 IIC 时钟线对应的 GPIO 引脚。 */
+#define MY_HWT101_IIC_SDA_PIN         HWT101_SDA_Pin       /* HWT101 软件 IIC 数据线对应的 GPIO 引脚。 */
+#define MY_HWT101_IIC_DELAY_UNIT      160U /* 软件 IIC 单位延时的空循环次数，依赖当前主频实测。 */
+#define MY_HWT101_IIC_ACK_TIMEOUT     250U /* 等待从机拉低 SDA 应答的最大轮询次数。 */
+#define MY_HWT101_ANGLE_SCALE         (180.0f / 32768.0f)  /* 16 位原始角度值换算为度的比例。 */
+#define MY_HWT101_GYRO_SCALE          (2000.0f / 32768.0f) /* 16 位原始角速度值换算为度每秒的比例。 */
 
 /**
   * @brief 软件 IIC 短延时。
@@ -32,7 +32,7 @@
   */
 static void My_hwt101_iic_delay_My(uint32_t count)
 {
-  volatile uint32_t ticks = count * MY_HWT101_IIC_DELAY_UNIT;
+  volatile uint32_t ticks = count * MY_HWT101_IIC_DELAY_UNIT; /* 防止编译器消除的软件 IIC 延时循环计数。 */
 
   while (ticks > 0U)
   {
@@ -116,7 +116,7 @@ static int16_t My_hwt101_make_int16_My(uint8_t low, uint8_t high)
   */
 void My_hwt101_iic_init_My(void)
 {
-  GPIO_InitTypeDef gpio_init = {0};
+  GPIO_InitTypeDef gpio_init = {0}; /* HWT101 软件 IIC 开漏上拉引脚的初始化参数。 */
 
   __HAL_RCC_GPIOC_CLK_ENABLE();
 
@@ -166,7 +166,7 @@ void My_hwt101_iic_stop_My(void)
   */
 uint8_t My_hwt101_iic_wait_ack_My(void)
 {
-  uint8_t timeout = 0U;
+  uint8_t timeout = 0U; /* 等待 SDA 被从机拉低期间的轮询计数。 */
 
   My_hwt101_sda_input_My();
   My_hwt101_set_sda_My(1U);
@@ -222,7 +222,7 @@ void My_hwt101_iic_nack_My(void)
   */
 void My_hwt101_iic_send_byte_My(uint8_t data)
 {
-  uint8_t bit_index;
+  uint8_t bit_index; /* 当前发送的数据位序号，从最高位依次发送。 */
 
   My_hwt101_sda_output_My();
   My_hwt101_set_scl_My(0U);
@@ -246,8 +246,8 @@ void My_hwt101_iic_send_byte_My(uint8_t data)
   */
 uint8_t My_hwt101_iic_read_byte_My(uint8_t ack)
 {
-  uint8_t bit_index;
-  uint8_t data = 0U;
+  uint8_t bit_index; /* 当前接收的数据位序号，从最高位依次拼接。 */
+  uint8_t data = 0U; /* 从 SDA 逐位组装出的接收字节。 */
 
   My_hwt101_set_sda_My(1U);
   My_hwt101_sda_input_My();
@@ -333,7 +333,7 @@ HAL_StatusTypeDef My_hwt101_iic_read_len_My(uint8_t reg, uint8_t *data, uint8_t 
   */
 HAL_StatusTypeDef My_hwt101_iic_write_len_My(uint8_t reg, const uint8_t *data, uint8_t length)
 {
-  uint8_t index;
+  uint8_t index; /* 当前写入的数据缓冲区索引。 */
 
   if (data == NULL || length == 0U)
   {
@@ -372,7 +372,7 @@ HAL_StatusTypeDef My_hwt101_iic_write_len_My(uint8_t reg, const uint8_t *data, u
   */
 HAL_StatusTypeDef My_hwt101_check_ack_My(void)
 {
-  HAL_StatusTypeDef status = HAL_OK;
+  HAL_StatusTypeDef status = HAL_OK; /* 保存地址阶段或单字节写入过程的 HAL 状态。 */
 
   My_hwt101_iic_start_My();
   My_hwt101_iic_send_byte_My((uint8_t)(MY_HWT101_IIC_ADDRESS << 1U));
@@ -392,7 +392,7 @@ HAL_StatusTypeDef My_hwt101_check_ack_My(void)
   */
 HAL_StatusTypeDef My_hwt101_read_angle_My(My_hwt101_angle_t *angle)
 {
-  uint8_t buffer[6];
+  uint8_t buffer[6]; /* 连续保存横滚角、俯仰角和偏航角三个 16 位原始值。 */
 
   if (angle == NULL)
   {
@@ -421,7 +421,7 @@ HAL_StatusTypeDef My_hwt101_read_angle_My(My_hwt101_angle_t *angle)
   */
 HAL_StatusTypeDef My_hwt101_read_gyro_My(My_hwt101_gyro_t *gyro)
 {
-  uint8_t buffer[6];
+  uint8_t buffer[6]; /* 连续保存 X、Y、Z 三轴角速度的三个 16 位原始值。 */
 
   if (gyro == NULL)
   {
@@ -450,7 +450,7 @@ HAL_StatusTypeDef My_hwt101_read_gyro_My(My_hwt101_gyro_t *gyro)
   */
 HAL_StatusTypeDef My_hwt101_read_yaw_My(float *yaw_deg)
 {
-  My_hwt101_angle_t angle;
+  My_hwt101_angle_t angle; /* 临时保存完整三轴角度，本接口只向调用者返回偏航角。 */
 
   if (yaw_deg == NULL)
   {
@@ -473,7 +473,7 @@ HAL_StatusTypeDef My_hwt101_read_yaw_My(float *yaw_deg)
   */
 HAL_StatusTypeDef My_hwt101_read_z_gyro_My(float *z_dps)
 {
-  My_hwt101_gyro_t gyro;
+  My_hwt101_gyro_t gyro; /* 临时保存完整三轴角速度，本接口只向调用者返回 Z 轴值。 */
 
   if (z_dps == NULL)
   {

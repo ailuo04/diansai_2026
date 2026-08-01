@@ -1,5 +1,5 @@
 ﻿#ifndef MY_PID_H
-#define MY_PID_H
+#define MY_PID_H /* 防止 PID 控制器接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {

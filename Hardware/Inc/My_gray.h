@@ -1,5 +1,5 @@
 ﻿#ifndef MY_GRAY_H
-#define MY_GRAY_H
+#define MY_GRAY_H /* 防止灰度循迹接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {
@@ -8,27 +8,29 @@ extern "C" {
 #include <stdint.h>
 #include "My_pid.h"
 
-#define MY_GRAY_1_MASK (0x80U)
-#define MY_GRAY_2_MASK (0x40U)
-#define MY_GRAY_3_MASK (0x20U)
-#define MY_GRAY_4_MASK (0x10U)
-#define MY_GRAY_5_MASK (0x08U)
-#define MY_GRAY_6_MASK (0x04U)
-#define MY_GRAY_7_MASK (0x02U)
-#define MY_GRAY_8_MASK (0x01U)
-#define MY_GRAY_TRACK_MASK ((uint8_t)(MY_GRAY_4_MASK | MY_GRAY_5_MASK | MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK))
-#define MY_GRAY_STOP_LEFT_PATTERN ((uint8_t)(MY_GRAY_4_MASK | MY_GRAY_5_MASK | MY_GRAY_6_MASK))
-#define MY_GRAY_STOP_MIDDLE_PATTERN ((uint8_t)(MY_GRAY_5_MASK | MY_GRAY_6_MASK | MY_GRAY_7_MASK))
-#define MY_GRAY_STOP_RIGHT_PATTERN ((uint8_t)(MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK))
-#define MY_GRAY_STOP_CONFIRM_CYCLES 3U
+#define MY_GRAY_1_MASK (0x80U) /* 灰度位图中第 1 路传感器对应的位掩码。 */
+#define MY_GRAY_2_MASK (0x40U) /* 灰度位图中第 2 路传感器对应的位掩码。 */
+#define MY_GRAY_3_MASK (0x20U) /* 灰度位图中第 3 路传感器对应的位掩码。 */
+#define MY_GRAY_4_MASK (0x10U) /* 灰度位图中第 4 路传感器对应的位掩码。 */
+#define MY_GRAY_5_MASK (0x08U) /* 灰度位图中第 5 路传感器对应的位掩码。 */
+#define MY_GRAY_6_MASK (0x04U) /* 灰度位图中第 6 路传感器对应的位掩码。 */
+#define MY_GRAY_7_MASK (0x02U) /* 灰度位图中第 7 路传感器对应的位掩码。 */
+#define MY_GRAY_8_MASK (0x01U) /* 灰度位图中第 8 路传感器对应的位掩码。 */
+#define MY_GRAY_TRACK_MASK ((uint8_t)(MY_GRAY_4_MASK | MY_GRAY_5_MASK | MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK)) /* 实际参与循迹加权计算的 Gray_4～Gray_8 通道集合。 */
+#define MY_GRAY_STOP_LEFT_PATTERN ((uint8_t)(MY_GRAY_4_MASK | MY_GRAY_5_MASK | MY_GRAY_6_MASK)) /* 停车标志左侧候选三连黑组合。 */
+#define MY_GRAY_STOP_MIDDLE_PATTERN ((uint8_t)(MY_GRAY_5_MASK | MY_GRAY_6_MASK | MY_GRAY_7_MASK)) /* 停车标志中间候选三连黑组合。 */
+#define MY_GRAY_STOP_RIGHT_PATTERN ((uint8_t)(MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK)) /* 停车标志右侧候选三连黑组合。 */
+#define MY_GRAY_STOP_CONFIRM_CYCLES 5U /* 停车标志必须连续满足的 10 毫秒采样次数，用于过滤瞬时误判。 */
 
-#define MY_GRAY_PID_DEFAULT_BASE_PWM         250
-#define MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT 300.0f
-#define MY_GRAY_PID_DEFAULT_ACTIVE_LEVEL     0U
-#define MY_GRAY_RAMP_TIME_MS                 1000U
-#define MY_GRAY_CONTROL_PERIOD_MS            10U
-#define MY_GRAY_REVERSE_BRAKE_PWM            120
-#define MY_GRAY_REVERSE_BRAKE_TIME_MS        50U
+#define MY_GRAY_PID_DEFAULT_BASE_PWM         250    /* 灰度控制器初始化时使用的默认直行基础 PWM。 */
+#define MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT 300.0f /* 灰度位置 PID 默认转向修正绝对值上限。 */
+#define MY_GRAY_PID_DEFAULT_ACTIVE_LEVEL     0U     /* 默认以低电平表示检测到黑线。 */
+#define MY_GRAY_RAMP_TIME_MS                 3000U  /* 任务启动时 S 型速度曲线的持续时间，单位毫秒。 */
+#define MY_GRAY_CONTROL_PERIOD_MS            10U    /* TIM6 灰度控制更新周期，单位毫秒。 */
+#define MY_GRAY_TASK2_SLOWDOWN_TIME_MS      13000U /* 任务 2 从启动计时起进入低速段的时刻，单位毫秒。 */
+#define MY_GRAY_TASK2_SLOW_BASE_PWM           250  /* 13 秒后使用的低速段基础 PWM；增大可提速，但会缩短停车标志识别时间。 */
+#define MY_GRAY_REVERSE_BRAKE_PWM            120 /* 识别停车标志后施加的反向开环制动 PWM。 */
+#define MY_GRAY_REVERSE_BRAKE_TIME_MS        50U /* 反向制动持续时间，单位毫秒。 */
 
 typedef struct
 {
@@ -49,7 +51,7 @@ typedef struct
   float ramp_pwm;         /* 当前经过 S 曲线平滑后的基础 PWM。 */
 } My_gray_pid_control_t;
 
-extern volatile My_gray_pid_control_t My_gray_pid_control_My;
+extern volatile My_gray_pid_control_t My_gray_pid_control_My; /* TIM6 中断读写的灰度循迹控制器状态。 */
 
 /**
   * @brief 读取 8 路灰度传感器的原始数字电平。

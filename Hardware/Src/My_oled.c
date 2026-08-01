@@ -5,16 +5,16 @@
 #include <stdio.h>
 #include <string.h>
 
-#define MY_OLED_I2C_DELAY 200U
-#define MY_OLED_PIXEL_WIDTH 128U
-#define MY_OLED_COLUMN_OFFSET 2U
-#define MY_OLED_FORMAT_BUFFER_SIZE 128U
-#define MY_OLED_GB2312_FLASH_ADDRESS 0x080C0000UL
-#define MY_OLED_GB2312_FONT_MAGIC 0x32334247UL
-#define MY_OLED_GB2312_FONT_VERSION 1U
-#define MY_OLED_GB2312_GLYPH_COUNT 7445U
-#define MY_OLED_GB2312_ENTRY_SIZE 34U
-#define MY_OLED_GB2312_HEADER_SIZE 16U
+#define MY_OLED_I2C_DELAY 200U /* OLED 软件 I2C 每次电平切换之间的空循环延时次数。 */
+#define MY_OLED_PIXEL_WIDTH 128U /* SSD1306 显示区域的水平像素总数。 */
+#define MY_OLED_COLUMN_OFFSET 2U /* 当前 OLED 控制器显存列地址相对可视区域的固定偏移。 */
+#define MY_OLED_FORMAT_BUFFER_SIZE 128U /* 格式化显示接口使用的临时字符串缓冲区容量，单位字节。 */
+#define MY_OLED_GB2312_FLASH_ADDRESS 0x080C0000UL /* GB2312 字库镜像在 MCU 内部 Flash 中的固定起始地址。 */
+#define MY_OLED_GB2312_FONT_MAGIC 0x32334247UL /* 字库头部用于识别 GB2312 镜像格式的魔数。 */
+#define MY_OLED_GB2312_FONT_VERSION 1U /* 当前代码支持的 GB2312 字库镜像格式版本。 */
+#define MY_OLED_GB2312_GLYPH_COUNT 7445U /* 字库查找表中包含的 GB2312 双字节字符数量。 */
+#define MY_OLED_GB2312_ENTRY_SIZE 34U /* 单个字库表项占用字节数：2 字节编码加 32 字节点阵。 */
+#define MY_OLED_GB2312_HEADER_SIZE 16U /* 字库镜像头部在字符表之前占用的字节数。 */
 
 typedef struct
 {
@@ -36,8 +36,10 @@ typedef char My_oled_header_size_check_My[
 typedef char My_oled_entry_size_check_My[
   sizeof(My_oled_gb2312_glyph_t) == MY_OLED_GB2312_ENTRY_SIZE ? 1 : -1];
 
+/* 将固定 Flash 地址解释为只读字库头结构指针。 */
 #define MY_OLED_GB2312_HEADER_My \
   ((const My_oled_gb2312_header_t *)(uintptr_t)MY_OLED_GB2312_FLASH_ADDRESS)
+/* 字库头之后按表项结构连续排列的 GB2312 字符点阵表。 */
 #define MY_OLED_GB2312_TABLE_My \
   ((const My_oled_gb2312_glyph_t *)(uintptr_t) \
    (MY_OLED_GB2312_FLASH_ADDRESS + MY_OLED_GB2312_HEADER_SIZE))
@@ -45,22 +47,22 @@ typedef char My_oled_entry_size_check_My[
 #include "My_oled_ascii_font.inc"
 
 /* 软件 I2C 使用 CubeMX 当前配置的 OLED_SCK/OLED_SDA 引脚。 */
-#define MY_OLED_SCL_PORT OLED_SCK_GPIO_Port
-#define MY_OLED_SCL_PIN  OLED_SCK_Pin
-#define MY_OLED_SDA_PORT OLED_SDA_GPIO_Port
-#define MY_OLED_SDA_PIN  OLED_SDA_Pin
+#define MY_OLED_SCL_PORT OLED_SCK_GPIO_Port /* OLED 软件 I2C 时钟线对应的 GPIO 端口。 */
+#define MY_OLED_SCL_PIN  OLED_SCK_Pin       /* OLED 软件 I2C 时钟线对应的 GPIO 引脚。 */
+#define MY_OLED_SDA_PORT OLED_SDA_GPIO_Port /* OLED 软件 I2C 数据线对应的 GPIO 端口。 */
+#define MY_OLED_SDA_PIN  OLED_SDA_Pin       /* OLED 软件 I2C 数据线对应的 GPIO 引脚。 */
 
-static uint8_t My_oled_page_My;
-static uint8_t My_oled_column_My;
-static uint8_t My_oled_address_My;
+static uint8_t My_oled_page_My; /* 下一次写显示数据时使用的 OLED 页地址，范围为 0～7。 */
+static uint8_t My_oled_column_My; /* 下一次写显示数据时使用的可视区域列地址，范围为 0～127。 */
+static uint8_t My_oled_address_My; /* 初始化探测到的 OLED 7 位 I2C 地址，0 表示未发现设备。 */
 static uint8_t My_oled_page_cache_My[8][MY_OLED_PIXEL_WIDTH]; /* 保存已写入各页的显示数据。 */
-static const uint8_t My_oled_degree_8x16_My[16] = {
+static const uint8_t My_oled_degree_8x16_My[16] = { /* 8×16 角度符号的上下页点阵数据。 */
   0x00U,0x0CU,0x12U,0x12U,0x12U,0x0CU,0x00U,0x00U,
   0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U
 }; /* 8x16 角度符号，上页显示空心圆，下页留空。 */
 
 /* 仅保留常用数字、大写字母和标点，未知字符显示为空格。 */
-static const uint8_t My_oled_font_My[39][5] = {
+static const uint8_t My_oled_font_My[39][5] = { /* 数字、大写字母和常用标点的 5 列 ASCII 点阵表。 */
   {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},
   {0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4B,0x31},
   {0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
@@ -85,7 +87,7 @@ static const uint8_t My_oled_font_My[39][5] = {
 
 static void My_oled_delay_My(void)
 {
-  volatile uint32_t ticks = MY_OLED_I2C_DELAY;
+  volatile uint32_t ticks = MY_OLED_I2C_DELAY; /* 防止编译器消除的软件 I2C 电平保持延时计数。 */
   while (ticks > 0U) { ticks--; }
 }
 
@@ -120,8 +122,8 @@ static void My_oled_stop_My(void)
   */
 static HAL_StatusTypeDef My_oled_send_byte_My(uint8_t value)
 {
-  uint8_t bit_index;
-  GPIO_PinState ack_state;
+  uint8_t bit_index; /* 当前发送的数据位序号，从最高位依次发送。 */
+  GPIO_PinState ack_state; /* 第九个时钟周期采样到的 OLED 应答电平。 */
 
   for (bit_index = 0U; bit_index < 8U; bit_index++)
   {
@@ -150,7 +152,7 @@ static HAL_StatusTypeDef My_oled_write_bytes_My(uint8_t control,
                                                  const uint8_t *data,
                                                  uint16_t length)
 {
-  uint16_t index;
+  uint16_t index; /* 当前写入控制字节或数据缓冲区的索引。 */
 
   if (My_oled_address_My == 0U || data == NULL)
   {
@@ -194,7 +196,7 @@ static HAL_StatusTypeDef My_oled_command_My(uint8_t command)
   */
 static HAL_StatusTypeDef My_oled_probe_address_My(uint8_t address)
 {
-  HAL_StatusTypeDef status;
+  HAL_StatusTypeDef status; /* 保存指定地址探测过程的 I2C 发送状态。 */
 
   My_oled_start_My();
   status = My_oled_send_byte_My((uint8_t)(address << 1U));
@@ -207,7 +209,7 @@ static HAL_StatusTypeDef My_oled_probe_address_My(uint8_t address)
   */
 static void My_oled_recover_bus_My(void)
 {
-  uint8_t clock_index;
+  uint8_t clock_index; /* 总线恢复过程中产生的附加 SCL 时钟脉冲计数。 */
 
   My_oled_sda_My(1U);
   for (clock_index = 0U; clock_index < 9U; clock_index++)
@@ -224,8 +226,8 @@ static void My_oled_recover_bus_My(void)
   */
 HAL_StatusTypeDef My_oled_init_My(void)
 {
-  GPIO_InitTypeDef gpio_init = {0};
-  static const uint8_t init_commands[] = {
+  GPIO_InitTypeDef gpio_init = {0}; /* OLED 软件 I2C 开漏上拉引脚的初始化参数。 */
+  static const uint8_t init_commands[] = { /* SSD1306 上电后按顺序发送的固定初始化命令序列。 */
     0xAEU,0xD5U,0x80U,0xA8U,0x3FU,0xD3U,0x00U,0x40U,
     0x8DU,0x14U,0x20U,0x02U,0xA1U,0xC8U,0xDAU,0x12U,
     0x81U,0x7FU,0xD9U,0xF1U,0xDBU,0x40U,0xA4U,0xA6U
@@ -309,8 +311,8 @@ void My_oled_set_cursor_My(uint8_t page, uint8_t column)
   */
 void My_oled_clear_My(void)
 {
-  uint8_t blank[MY_OLED_PIXEL_WIDTH] = {0U};
-  uint8_t page;
+  uint8_t blank[MY_OLED_PIXEL_WIDTH] = {0U}; /* 单页全零像素数据，用于清空 OLED 显存。 */
+  uint8_t page; /* 当前正在清空的 OLED 页索引。 */
 
   for (page = 0U; page < 8U; page++)
   {
@@ -325,8 +327,8 @@ void My_oled_clear_My(void)
 
 void My_oled_write_char_My(char value)
 {
-  uint8_t glyph[6] = {0U,0U,0U,0U,0U,0U};
-  uint8_t index;
+  uint8_t glyph[6] = {0U,0U,0U,0U,0U,0U}; /* 当前 ASCII 字符的 5 列点阵及 1 列字符间隔。 */
+  uint8_t index; /* 当前复制到字符点阵缓冲区的列索引。 */
   uint8_t start_column = My_oled_column_My; /* 当前字符写入前的逻辑列。 */
   if (value >= '0' && value <= '9') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[value - '0'][index]; } }
   else if (value >= 'A' && value <= 'Z') { for (index = 0U; index < 5U; index++) { glyph[index] = My_oled_font_My[10U + value - 'A'][index]; } }

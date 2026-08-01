@@ -5,11 +5,13 @@
 
 volatile My_gray_pid_control_t My_gray_pid_control_My; /* 灰度循迹参数和运行状态，可在调试器中观察。 */
 
+/* S 型速度曲线包含的 10 毫秒离散控制步数。 */
 #define MY_GRAY_RAMP_STEPS ((uint16_t)(MY_GRAY_RAMP_TIME_MS / MY_GRAY_CONTROL_PERIOD_MS))
+/* 停车标志触发后需要执行的反向制动控制周期数。 */
 #define MY_GRAY_REVERSE_BRAKE_CYCLES \
   ((uint8_t)(MY_GRAY_REVERSE_BRAKE_TIME_MS / MY_GRAY_CONTROL_PERIOD_MS))
 
-static const int8_t My_gray_position_weight_My[8] =
+static const int8_t My_gray_position_weight_My[8] = /* Gray_1～Gray_8 对应的循迹横向位置权重。 */
 {
   -7, -5, -3, -1, 1, 3, 5, 7
 }; /* 从 Gray_1 到 Gray_8 的位置权重。 */
@@ -40,7 +42,7 @@ static float My_gray_limit_correction_My(float value)
   */
 static float My_gray_s_curve_My(uint16_t step)
 {
-  float t = (float)step / (float)MY_GRAY_RAMP_STEPS;
+  float t = (float)step / (float)MY_GRAY_RAMP_STEPS; /* 当前曲线步号归一化后的时间进度，范围为 0～1。 */
 
   if (t >= 1.0f)
   {
@@ -56,7 +58,7 @@ static float My_gray_s_curve_My(uint16_t step)
   */
 static void My_gray_update_ramp_My(void)
 {
-  float progress = My_gray_s_curve_My(My_gray_pid_control_My.ramp_step);
+  float progress = My_gray_s_curve_My(My_gray_pid_control_My.ramp_step); /* 当前 S 曲线计算出的平滑速度比例。 */
 
   My_gray_pid_control_My.ramp_pwm =
     My_gray_pid_control_My.ramp_start_pwm +
@@ -246,6 +248,7 @@ void My_gray_pid_update_My(void)
   uint8_t gray_index;   /* 当前处理的灰度通道索引。 */
   uint8_t active_count = 0U; /* 当前检测到线的通道数量。 */
   int16_t weighted_sum = 0;  /* 所有有效通道的位置权重之和。 */
+  uint32_t elapsed_ms;       /* 当前中断读取的任务 2 运行时间快照，单位毫秒，用于判断是否进入低速段。 */
   float correction;          /* PID 计算后的转向修正量。 */
   float motion_scale;        /* 当前 S 曲线速度占目标基础速度的比例。 */
 
@@ -312,6 +315,18 @@ void My_gray_pid_update_My(void)
   if (My_gray_pid_control_My.enabled == 0U)
   {
     return;
+  }
+
+  /*
+   * 任务 2 前 13 秒保持较高基础速度，之后切换到较低基础速度以增加停车标志
+   * 的有效识别时间。计时读取只访问 32 位状态并短暂屏蔽中断，不执行外设访问、
+   * 阻塞或动态内存操作，适合在 TIM6 控制中断中调用；切换后保持第二段速度直到停车。
+   */
+  elapsed_ms = My_timer_get_elapsed_ms_My();
+  if ((elapsed_ms >= MY_GRAY_TASK2_SLOWDOWN_TIME_MS) &&
+      (My_gray_pid_control_My.base_pwm > MY_GRAY_TASK2_SLOW_BASE_PWM))
+  {
+    My_gray_pid_control_My.base_pwm = MY_GRAY_TASK2_SLOW_BASE_PWM;
   }
 
   My_gray_update_ramp_My();

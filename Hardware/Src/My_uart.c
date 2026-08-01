@@ -7,35 +7,35 @@
 __asm(".global __use_no_semihosting\n");
 
 /* ARM 标准库需要由应用提供文件流对象，避免启动阶段进入半主机断点。 */
-FILE __stdout;
-FILE __stdin;
+FILE __stdout; /* ARM 标准库 printf 使用的标准输出文件流占位对象。 */
+FILE __stdin;  /* ARM 标准库标准输入使用的文件流占位对象，本工程不接收标准输入。 */
 
 /* DMA 正在写入的原始接收缓冲区。 */
-static uint8_t My_uart_rx_dma_buffer[MY_UART_RX_BUFFER_SIZE];
+static uint8_t My_uart_rx_dma_buffer[MY_UART_RX_BUFFER_SIZE]; /* USART3 DMA 当前正在写入的原始接收缓冲区。 */
 /* 由空闲中断确认后的“四槽环形帧队列”。 */
-static uint8_t My_uart_rx_frame_queue[MY_UART_RX_FRAME_QUEUE_SIZE][MY_UART_RX_BUFFER_SIZE];
+static uint8_t My_uart_rx_frame_queue[MY_UART_RX_FRAME_QUEUE_SIZE][MY_UART_RX_BUFFER_SIZE]; /* 空闲中断确认后的完整接收帧环形队列。 */
 /* 每个槽位中当前帧的有效字节数。 */
-static volatile uint16_t My_uart_rx_frame_lengths[MY_UART_RX_FRAME_QUEUE_SIZE];
+static volatile uint16_t My_uart_rx_frame_lengths[MY_UART_RX_FRAME_QUEUE_SIZE]; /* 各接收队列槽位当前保存的有效帧长度。 */
 /* 指向当前最旧未读帧的槽位索引。 */
-static volatile uint8_t My_uart_rx_queue_head;
+static volatile uint8_t My_uart_rx_queue_head; /* 当前最旧未读接收帧所在的队列槽位索引。 */
 /* 当前队列中待处理帧的数量，范围为 0~4。 */
-static volatile uint8_t My_uart_rx_queue_count;
+static volatile uint8_t My_uart_rx_queue_count; /* 当前接收队列中等待主循环处理的帧数量。 */
 /* 主循环读取最旧一帧时使用的临时拷贝缓冲区。 */
-static uint8_t My_uart_poll_buffer[MY_UART_RX_BUFFER_SIZE];
+static uint8_t My_uart_poll_buffer[MY_UART_RX_BUFFER_SIZE]; /* 主循环取出一帧后交给业务回调的临时缓冲区。 */
 /* 接收过程中是否发生过队列覆盖、缓冲区截断或恢复异常。 */
-static volatile uint8_t My_uart_rx_overflow;
+static volatile uint8_t My_uart_rx_overflow; /* 非零表示发生队列覆盖、帧截断或其他接收异常。 */
 /* 重新启动 DMA 接收流程时是否发生过失败。 */
-static volatile uint8_t My_uart_rx_restart_error;
+static volatile uint8_t My_uart_rx_restart_error; /* 非零表示重新挂载 USART3 DMA 接收失败。 */
 /* DMA 发送环形缓冲区，调用者数据在返回前会复制到此处。 */
-static uint8_t My_uart_tx_buffer[MY_UART_TX_BUFFER_SIZE];
+static uint8_t My_uart_tx_buffer[MY_UART_TX_BUFFER_SIZE]; /* 保存调用者待发送数据的 DMA 发送环形缓冲区。 */
 /* 当前最旧待发送字节在环形缓冲区中的索引。 */
-static volatile uint16_t My_uart_tx_head;
+static volatile uint16_t My_uart_tx_head; /* 当前最旧待发送字节在发送环形缓冲区中的索引。 */
 /* 环形缓冲区中等待发送及正在发送的总字节数。 */
-static volatile uint16_t My_uart_tx_count;
+static volatile uint16_t My_uart_tx_count; /* 发送环形缓冲区中等待发送及正在发送的总字节数。 */
 /* 当前 DMA 正在发送的连续字节数，0 表示 DMA 空闲。 */
-static volatile uint16_t My_uart_tx_dma_length;
+static volatile uint16_t My_uart_tx_dma_length; /* 当前一次 DMA 连续发送区域的字节数，0 表示空闲。 */
 /* DMA 发送启动或运行过程中是否发生过异常。 */
-static volatile uint8_t My_uart_tx_error;
+static volatile uint8_t My_uart_tx_error; /* 非零表示 DMA 发送启动、完成或状态一致性发生异常。 */
 
 /**
   * @brief 计算环形队列中的下一个槽位索引。
@@ -73,9 +73,9 @@ static void My_uart_restore_irq_My(uint32_t primask)
   */
 static HAL_StatusTypeDef My_uart_start_transmit_My(void)
 {
-  HAL_StatusTypeDef status;
-  uint32_t primask;
-  uint16_t length;
+  HAL_StatusTypeDef status; /* 本次启动 USART3 DMA 发送接口返回的状态。 */
+  uint32_t primask; /* 检查和更新发送队列前保存的全局中断屏蔽状态。 */
+  uint16_t length; /* 本次可从发送环形缓冲区连续交给 DMA 的字节数。 */
 
   primask = __get_PRIMASK();
   __disable_irq();
@@ -118,7 +118,7 @@ static HAL_StatusTypeDef My_uart_start_transmit_My(void)
   */
 HAL_StatusTypeDef My_uart_init_My(void)
 {
-  uint8_t index;
+  uint8_t index; /* 初始化时当前清零的接收帧队列槽位索引。 */
 
   My_uart_rx_queue_head = 0U;
   My_uart_rx_queue_count = 0U;
@@ -143,7 +143,7 @@ HAL_StatusTypeDef My_uart_init_My(void)
   */
 HAL_StatusTypeDef My_uart_restart_receive_My(void)
 {
-  HAL_StatusTypeDef status;
+  HAL_StatusTypeDef status; /* 重新挂载 USART3 空闲中断 DMA 接收的返回状态。 */
 
   status = HAL_UARTEx_ReceiveToIdle_DMA(&huart3,
                                         My_uart_rx_dma_buffer,
@@ -165,9 +165,9 @@ HAL_StatusTypeDef My_uart_restart_receive_My(void)
   */
 HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t timeout)
 {
-  HAL_StatusTypeDef status;
-  uint32_t start_tick;
-  uint16_t sent_length = 0U;
+  HAL_StatusTypeDef status; /* 当前一次发送队列启动或推进操作的返回状态。 */
+  uint32_t start_tick; /* 本次入队等待开始时的系统毫秒时刻，用于超时判断。 */
+  uint16_t sent_length = 0U; /* 调用者数据已经复制进发送环形缓冲区的字节数。 */
 
   if (length == 0U)
   {
@@ -182,10 +182,10 @@ HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t
   start_tick = HAL_GetTick();
   while (sent_length < length)
   {
-    uint32_t primask;
-    uint16_t available;
-    uint16_t copy_length;
-    uint16_t write_index;
+    uint32_t primask; /* 本轮检查发送缓冲区空间前保存的全局中断屏蔽状态。 */
+    uint16_t available; /* 本轮发送环形缓冲区剩余的可写字节数。 */
+    uint16_t copy_length; /* 本轮实际复制到连续可写区域的数据长度。 */
+    uint16_t write_index; /* 本轮数据在发送环形缓冲区中的起始写入索引。 */
 
     primask = __get_PRIMASK();
     __disable_irq();
@@ -242,8 +242,8 @@ HAL_StatusTypeDef My_uart_send_My(const uint8_t *data, uint16_t length, uint32_t
   */
 HAL_StatusTypeDef My_uart_send_string_My(const char *text, uint32_t timeout)
 {
-  const uint8_t *cursor;
-  size_t remain;
+  const uint8_t *cursor; /* 当前尚未加入发送队列的字符串数据起始地址。 */
+  size_t remain; /* 当前尚未加入发送队列的字符串字节数。 */
 
   if (text == NULL)
   {
@@ -255,8 +255,8 @@ HAL_StatusTypeDef My_uart_send_string_My(const char *text, uint32_t timeout)
 
   while (remain > 0U)
   {
-    uint16_t chunk = (remain > UINT16_MAX) ? UINT16_MAX : (uint16_t)remain;
-    HAL_StatusTypeDef status = My_uart_send_My(cursor, chunk, timeout);
+    uint16_t chunk = (remain > UINT16_MAX) ? UINT16_MAX : (uint16_t)remain; /* 受底层 16 位长度接口限制的本轮发送字节数。 */
+    HAL_StatusTypeDef status = My_uart_send_My(cursor, chunk, timeout); /* 本轮字符串分段加入发送队列的结果。 */
 
     if (status != HAL_OK)
     {
@@ -283,9 +283,9 @@ HAL_StatusTypeDef My_uart_send_string_My(const char *text, uint32_t timeout)
   */
 uint16_t My_uart_read_frame_My(uint8_t *data, uint16_t max_length)
 {
-  uint32_t primask;
-  uint16_t length;
-  uint8_t read_index;
+  uint32_t primask; /* 读取和释放接收帧队列槽位前保存的全局中断屏蔽状态。 */
+  uint16_t length; /* 当前最旧接收帧经调用者缓冲区限幅后的复制长度。 */
+  uint8_t read_index; /* 当前最旧未读接收帧所在的队列槽位索引。 */
 
   if (data == NULL || max_length == 0U)
   {
@@ -357,8 +357,8 @@ void My_uart_clear_overflow_My(void)
   */
 void My_uart_poll_My(void)
 {
-  HAL_StatusTypeDef status = My_uart_start_transmit_My();
-  uint16_t length = My_uart_read_frame_My(My_uart_poll_buffer,
+  HAL_StatusTypeDef status = My_uart_start_transmit_My(); /* 主循环本轮推进 DMA 发送队列的结果。 */
+  uint16_t length = My_uart_read_frame_My(My_uart_poll_buffer, /* 主循环本轮从接收队列取出的完整帧长度。 */
                                                 MY_UART_RX_BUFFER_SIZE);
 
   if (status != HAL_OK && status != HAL_BUSY)
@@ -395,8 +395,8 @@ __weak void My_uart_rx_frame_callback_My(const uint8_t *data, uint16_t length)
   */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-  uint16_t copy_length;
-  uint8_t write_index;
+  uint16_t copy_length; /* 本次 DMA 接收事件允许复制进帧队列的有效字节数。 */
+  uint8_t write_index; /* 本次新帧写入或覆盖的接收队列槽位索引。 */
 
   /* HAL 回调为所有 UART 共用；非 USART3 事件不属于本驱动，必须无副作用返回。 */
   if (huart->Instance != USART3)
@@ -457,8 +457,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
   */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-  uint32_t primask;
-  uint16_t completed_length;
+  uint32_t primask; /* 更新发送队列共享状态前保存的全局中断屏蔽状态。 */
+  uint16_t completed_length; /* 刚完成的 USART3 DMA 发送区域字节数。 */
 
   /* 忽略其他 UART 的发送完成事件，防止误推进 USART3 环形缓冲区。 */
   if (huart->Instance != USART3)
@@ -546,7 +546,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   */
 int fputc(int ch, FILE *f)
 {
-  uint8_t byte = (uint8_t)ch;
+  uint8_t byte = (uint8_t)ch; /* 转换后准备加入 USART3 发送队列的单字节数据。 */
 
   (void)f;
 

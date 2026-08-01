@@ -594,6 +594,11 @@
               <FilePath>../Hardware/Src/My_uart.c</FilePath>
             </File>
             <File>
+              <FileName>My_ball_balance.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/Src/My_ball_balance.c</FilePath>
+            </File>
+            <File>
               <FileName>IIC.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/Src/IIC.c</FilePath>

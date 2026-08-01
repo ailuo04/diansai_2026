@@ -1,5 +1,5 @@
 ﻿#ifndef MY_UART_H
-#define MY_UART_H
+#define MY_UART_H /* 防止 USART3 DMA 通信接口头文件被重复包含。 */
 
 #ifdef __cplusplus
 extern "C" {
@@ -8,9 +8,9 @@ extern "C" {
 #include "main.h"
 #include <stdint.h>
 
-#define MY_UART_RX_BUFFER_SIZE 256U
-#define MY_UART_RX_FRAME_QUEUE_SIZE 4U
-#define MY_UART_TX_BUFFER_SIZE 512U
+#define MY_UART_RX_BUFFER_SIZE 256U      /* 单次 DMA 接收缓冲区及单帧队列槽位容量，单位字节。 */
+#define MY_UART_RX_FRAME_QUEUE_SIZE 4U   /* 空闲中断确认后的接收帧环形队列槽位数量。 */
+#define MY_UART_TX_BUFFER_SIZE 512U      /* DMA 发送环形缓冲区总容量，单位字节。 */
 
 /**
   * @brief 初始化 USART3 DMA 收发。
