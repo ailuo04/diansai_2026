@@ -12,8 +12,8 @@ extern "C" {
 #define MY_MOVE_WHEEL_COUNT          4U      /* 底盘轮子数量，数组下标 1~4 对应四个电机。 */
 #define MY_MOVE_PWM_MAX              1000    /* 电机 PWM 输出最大绝对值，1000 对应 TIM5 的 100% 占空比。 */
 #define MY_MOVE_DEFAULT_TARGET_LIMIT 1500.0f /* 速度闭环默认目标限幅，防止异常目标直接打满输出。 */
-#define MY_MOVE_SPEED_PID_DEFAULT_KP 0.40f   /* 四轮增量式速度 PID 的保守初始比例系数，必须实车整定。 */
-#define MY_MOVE_SPEED_PID_DEFAULT_KI 0.02f   /* 四轮增量式速度 PID 的保守初始积分系数，必须实车整定。 */
+#define MY_MOVE_SPEED_PID_DEFAULT_KP 1.0f   /* 四轮增量式速度 PID 的保守初始比例系数，必须实车整定。 */
+#define MY_MOVE_SPEED_PID_DEFAULT_KI 1.0f   /* 四轮增量式速度 PID 的保守初始积分系数，必须实车整定。 */
 #define MY_MOVE_SPEED_PID_DEFAULT_KD 0.00f   /* 编码器周期计数量化明显，默认关闭微分项。 */
 
 extern volatile int16_t My_move_debug_velocity_1_My; /* Keil Watch 调试用：1 号轮 10 ms 编码器速度。 */
@@ -23,8 +23,9 @@ extern volatile int16_t My_move_debug_velocity_4_My; /* Keil Watch 调试用：4
 
 /**
   * @brief 初始化四路电机 PWM 与四路编码器。
-  * @details PWM 使用 TIM5 CH1~CH4；1 号轮使用 PA8/PA9 外部中断软件正交计数，
-  *          2 号轮使用 TIM2，3 号轮使用 TIM3，4 号轮使用 TIM4 硬件正交计数。
+  * @details PWM 使用 TIM5 CH1~CH4；1 号轮使用 TIM2 硬件正交计数，
+  *          2 号轮使用 PA8/PA9 外部中断软件正交计数，3 号轮使用 TIM3，
+  *          4 号轮使用 TIM4 硬件正交计数。
   *          TIM1 只属于转向位置编码器，TIM8_CH4 只属于转向 PWM。
   * @retval HAL_OK 表示全部启动成功，否则表示至少一个定时器启动失败
   */

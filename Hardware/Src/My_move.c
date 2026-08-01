@@ -6,9 +6,9 @@ static volatile int32_t My_move_encoder[MY_MOVE_WHEEL_COUNT + 1U];       /* 兼�
 static volatile float My_move_target[MY_MOVE_WHEEL_COUNT + 1U];          /* 四路轮子的目标速度或开环 PWM 目标，下标 1~4 有效。 */
 static volatile My_pid_t My_move_speed_pid[MY_MOVE_WHEEL_COUNT + 1U]; /* 四路轮子的速度 PID 控制器，下标 1~4 有效。 */
 static volatile uint8_t My_move_speed_pid_ready;                            /* 速度 PID 参数初始化标志，0 表示未初始化。 */
-static volatile int16_t My_move_wheel1_period_count_My; /* 1 号轮 EXTI 在当前 TIM6 周期内累计的正交边沿增量。 */
-static uint8_t My_move_wheel1_last_state_My;            /* 1 号轮 A/B 相上一状态，仅由 EXTI 与复位流程访问。 */
-static uint32_t My_move_tim2_last_count_My;              /* 2 号轮 TIM2 上一周期 32 位 CNT 快照。 */
+static volatile int16_t My_move_wheel2_period_count_My; /* 2 号轮 EXTI 在当前 TIM6 周期内累计的正交边沿增量。 */
+static uint8_t My_move_wheel2_last_state_My;            /* 2 号轮 A/B 相上一状态，仅由 EXTI 与复位流程访问。 */
+static uint32_t My_move_tim2_last_count_My;              /* 1 号轮 TIM2 上一周期 32 位 CNT 快照。 */
 static uint16_t My_move_tim3_last_count_My;              /* 3 号轮 TIM3 上一周期 16 位 CNT 快照。 */
 static uint16_t My_move_tim4_last_count_My;              /* 4 号轮 TIM4 上一周期 16 位 CNT 快照。 */
 
@@ -20,7 +20,7 @@ volatile int16_t My_move_debug_velocity_4_My; /* Keil Watch 调试用：4 号轮
 /* 若实车发现某一路速度正负与电机机械正方向相反，只需把对应宏改为 -1 后重新编译。 */
 #define MY_MOVE_ENCODER_1_DIRECTION  1
 #define MY_MOVE_ENCODER_2_DIRECTION  1
-#define MY_MOVE_ENCODER_3_DIRECTION  1
+#define MY_MOVE_ENCODER_3_DIRECTION -1
 #define MY_MOVE_ENCODER_4_DIRECTION  1
 
 typedef struct
@@ -212,10 +212,10 @@ static int16_t My_move_read_16bit_encoder_delta_My(TIM_HandleTypeDef *htim,
 }
 
 /**
-  * @brief 读取 1 号轮 A/B 相当前逻辑状态。
+  * @brief 读取 2 号轮 A/B 相当前逻辑状态。
   * @retval bit0 为 A 相，bit1 为 B 相
   */
-static uint8_t My_move_read_wheel1_state_My(void)
+static uint8_t My_move_read_wheel2_state_My(void)
 {
   uint8_t state = 0U; /* 两位正交状态快照。 */
 
@@ -237,7 +237,7 @@ static uint8_t My_move_read_wheel1_state_My(void)
   * @param current_state 当前 A/B 两位状态
   * @retval +1、-1 或 0；0 表示重复状态或两位同时跳变的非法状态
   */
-static int8_t My_move_decode_wheel1_delta_My(uint8_t previous_state, uint8_t current_state)
+static int8_t My_move_decode_wheel2_delta_My(uint8_t previous_state, uint8_t current_state)
 {
   static const int8_t decode_table[16] =
   {
@@ -346,16 +346,16 @@ void My_move_stop_My(void)
 
 void My_move_update_encoder_My(void)
 {
-  int16_t wheel1_delta; /* 从 EXTI 软件计数器取出的 1 号轮本周期增量。 */
+  int16_t wheel2_delta; /* 从 EXTI 软件计数器取出的 2 号轮本周期增量。 */
   uint32_t interrupt_mask = __get_PRIMASK(); /* 保存进入临界区前的中断屏蔽状态。 */
 
   /*
-   * 1 号轮计数由 EXTI9_5_IRQHandler 异步累加。TIM6 周期读取并清零必须短暂屏蔽
+   * 2 号轮计数由 EXTI9_5_IRQHandler 异步累加。TIM6 周期读取并清零必须短暂屏蔽
    * 中断，避免清零瞬间丢失外部边沿；临界区内不访问硬件定时器，保持占用极短。
    */
   __disable_irq();
-  wheel1_delta = My_move_wheel1_period_count_My;
-  My_move_wheel1_period_count_My = 0;
+  wheel2_delta = My_move_wheel2_period_count_My;
+  My_move_wheel2_period_count_My = 0;
   if (interrupt_mask == 0U)
   {
     __enable_irq();
@@ -364,11 +364,15 @@ void My_move_update_encoder_My(void)
   /*
    * 三路硬件编码器使用相邻 CNT 快照求 10 ms 周期增量，速度环直接使用本周期
    * 脉冲数。这里不清零硬件 CNT，也不维护长期位置累计，避免丢边沿和无用状态。
+   *
+   * 实车逐轮验证表明，TIM2 对应物理 1 号轮，PA8/PA9 外部中断对应物理 2 号轮。
+   * 这里按物理轮号写入速度数组，确保每个速度 PID 使用本轮反馈而不是相邻轮反馈。
    */
-  My_move_velocity[1] = My_move_limit_encoder_delta_My((int32_t)wheel1_delta * MY_MOVE_ENCODER_1_DIRECTION);
-  My_move_velocity[2] = My_move_limit_encoder_delta_My(
+  My_move_velocity[1] = My_move_limit_encoder_delta_My(
     (int32_t)My_move_read_32bit_encoder_delta_My(&htim2, &My_move_tim2_last_count_My) *
-    MY_MOVE_ENCODER_2_DIRECTION);
+    MY_MOVE_ENCODER_1_DIRECTION);
+  My_move_velocity[2] = My_move_limit_encoder_delta_My(
+    (int32_t)wheel2_delta * MY_MOVE_ENCODER_2_DIRECTION);
   My_move_velocity[3] = My_move_limit_encoder_delta_My(
     (int32_t)My_move_read_16bit_encoder_delta_My(&htim3, &My_move_tim3_last_count_My) *
     MY_MOVE_ENCODER_3_DIRECTION);
@@ -392,8 +396,8 @@ void My_move_reset_encoder_My(void)
   uint32_t interrupt_mask = __get_PRIMASK(); /* 保存复位前中断屏蔽状态，保证 EXTI 计数原子清零。 */
 
   __disable_irq();
-  My_move_wheel1_period_count_My = 0;
-  My_move_wheel1_last_state_My = My_move_read_wheel1_state_My();
+  My_move_wheel2_period_count_My = 0;
+  My_move_wheel2_last_state_My = My_move_read_wheel2_state_My();
   __HAL_TIM_SET_COUNTER(&htim2, 0U);
   __HAL_TIM_SET_COUNTER(&htim3, 0U);
   __HAL_TIM_SET_COUNTER(&htim4, 0U);
@@ -422,7 +426,7 @@ void My_move_reset_encoder_My(void)
 }
 
 /**
-  * @brief 处理 1 号轮外部中断编码器边沿。
+  * @brief 处理 2 号轮外部中断编码器边沿。
   * @details 中断来源为 PA8/PA9 的 EXTI9_5 共享入口，触发条件为 A/B 相上下沿。
   *          函数只读取当前两相电平、查表判断方向并更新 volatile 周期计数；计数会
   *          在 TIM6 周期函数中被原子取走并清零。中断上下文禁止阻塞、打印、动态
@@ -439,14 +443,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     return;
   }
 
-  current_state = My_move_read_wheel1_state_My();
-  delta = My_move_decode_wheel1_delta_My(My_move_wheel1_last_state_My, current_state);
-  My_move_wheel1_last_state_My = current_state;
+  current_state = My_move_read_wheel2_state_My();
+  delta = My_move_decode_wheel2_delta_My(My_move_wheel2_last_state_My, current_state);
+  My_move_wheel2_last_state_My = current_state;
 
   if (delta != 0)
   {
-    My_move_wheel1_period_count_My = My_move_limit_encoder_delta_My(
-      (int32_t)My_move_wheel1_period_count_My + (int32_t)delta);
+    My_move_wheel2_period_count_My = My_move_limit_encoder_delta_My(
+      (int32_t)My_move_wheel2_period_count_My + (int32_t)delta);
   }
 }
 

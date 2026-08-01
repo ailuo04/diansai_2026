@@ -1,5 +1,6 @@
-﻿#include "My_gray.h"
+#include "My_gray.h"
 #include "main.h"
+#include "My_ball_balance.h"
 #include "My_move.h"
 #include "My_timer.h"
 
@@ -10,7 +11,7 @@ volatile My_gray_pid_control_t My_gray_pid_control_My; /* 灰度循迹参数和�
 /* 停车标志触发后需要执行的反向制动控制周期数。 */
 #define MY_GRAY_REVERSE_BRAKE_CYCLES \
   ((uint8_t)(MY_GRAY_REVERSE_BRAKE_TIME_MS / MY_GRAY_CONTROL_PERIOD_MS))
-/* 任务 5 终点 S 型减速包含的 10 毫秒离散控制步数。 */
+/* 任务 5/6 终点 S 型减速包含的 10 毫秒离散控制步数。 */
 #define MY_GRAY_STABLE_DECEL_STEPS \
   ((uint16_t)(MY_GRAY_STABLE_DECEL_TIME_MS / MY_GRAY_CONTROL_PERIOD_MS))
 
@@ -39,6 +40,88 @@ static float My_gray_limit_correction_My(float value)
 }
 
 /**
+  * @brief 对任务 5/6 的转向差速做动态幅值和单周期变化率限制。
+  * @param correction 灰度位置 PID 计算得到的原始转向差速量
+  * @param turn_limit 当前前进速度允许的最大左右差速量
+  * @retval 适合低冲击稳定循迹的转向差速量
+  * @details 最大差速随当前前进目标变化，圆弧时不会因为固定小上限而出界；同时
+  *          限制 10 ms 内的变化量，避免灰度误差跳变给钢球外环注入突发扰动。
+  */
+static float My_gray_limit_stable_correction_My(float correction,
+                                                float turn_limit)
+{
+  float limited_correction = correction; /* 先按当前前进速度限幅，再按上一周期输出做斜率限制。 */
+  float previous_correction = My_gray_pid_control_My.correction; /* 上一周期实际差速量。 */
+  float correction_delta;                /* 本周期相对上一周期实际差速量的变化量。 */
+
+  if (turn_limit < 0.0f)
+  {
+    turn_limit = 0.0f;
+  }
+  if (limited_correction > turn_limit)
+  {
+    limited_correction = turn_limit;
+  }
+  else if (limited_correction < -turn_limit)
+  {
+    limited_correction = -turn_limit;
+  }
+
+  if (previous_correction > turn_limit)
+  {
+    previous_correction = turn_limit;
+  }
+  else if (previous_correction < -turn_limit)
+  {
+    previous_correction = -turn_limit;
+  }
+
+  correction_delta = limited_correction - previous_correction;
+  if (correction_delta > MY_GRAY_STABLE_CORRECTION_STEP_LIMIT)
+  {
+    limited_correction = previous_correction + MY_GRAY_STABLE_CORRECTION_STEP_LIMIT;
+  }
+  else if (correction_delta < -MY_GRAY_STABLE_CORRECTION_STEP_LIMIT)
+  {
+    limited_correction = previous_correction - MY_GRAY_STABLE_CORRECTION_STEP_LIMIT;
+  }
+
+  if (limited_correction > turn_limit)
+  {
+    limited_correction = turn_limit;
+  }
+  else if (limited_correction < -turn_limit)
+  {
+    limited_correction = -turn_limit;
+  }
+
+  return limited_correction;
+}
+
+/**
+  * @brief 以外侧轮保持目标、内侧轮减速的方式输出任务 5/6 差速目标。
+  * @param forward_pwm 当前车体前进目标速度
+  * @param correction 当前受限后的左右差速量，正负表示转向方向
+  * @details 传统逆解使用 vx=目标、vw=修正，会让一侧轮速超过目标；本函数改为
+  *          vx=目标-|差速|/2、vw=差速/2，使外侧轮保持目标，内侧轮只减速，且
+  *          转弯时车体平均前进速度同步降低，避免小球受到额外加速度。
+  */
+static void My_gray_apply_stable_motion_My(float forward_pwm,
+                                           float correction)
+{
+  float correction_abs = correction >= 0.0f ? correction : -correction; /* 左右差速绝对值。 */
+  float stable_forward_pwm; /* 为保持外侧轮不超速而下调后的车体前进目标。 */
+
+  if (correction_abs > forward_pwm)
+  {
+    correction_abs = forward_pwm;
+    correction = correction >= 0.0f ? forward_pwm : -forward_pwm;
+  }
+  stable_forward_pwm = forward_pwm - correction_abs * 0.5f;
+  My_move_mecanum_inverse_My(stable_forward_pwm, 0.0f, correction * 0.5f);
+}
+
+/**
   * @brief 计算五次多项式 S 曲线的归一化进度。
   * @param step 当前离散步号
   * @param total_steps 当前曲线的总步数
@@ -57,6 +140,24 @@ static float My_gray_s_curve_My(uint16_t step, uint16_t total_steps)
 }
 
 /**
+  * @brief 计算五次多项式 S 曲线对归一化时间的导数。
+  * @param step 当前离散步号
+  * @param total_steps 当前曲线总步数
+  * @retval 归一化进度变化率，用于由速度曲线求规划加速度
+  */
+static float My_gray_s_curve_derivative_My(uint16_t step, uint16_t total_steps)
+{
+  float t = (float)step / (float)total_steps; /* 当前曲线步号归一化后的时间进度。 */
+
+  if (t <= 0.0f || t >= 1.0f)
+  {
+    return 0.0f;
+  }
+
+  return 30.0f * t * t * (1.0f - t) * (1.0f - t);
+}
+
+/**
   * @brief 按 S 型启动加速曲线刷新基础速度。
   * @details 仅在 TIM6 中断调用，不能阻塞；停车由停止接口立即清零，不经过本曲线。
   */
@@ -64,11 +165,26 @@ static void My_gray_update_ramp_My(void)
 {
   float progress = My_gray_s_curve_My(My_gray_pid_control_My.ramp_step,
                                       MY_GRAY_RAMP_STEPS); /* 当前 S 曲线计算出的平滑速度比例。 */
+  float progress_rate = My_gray_s_curve_derivative_My(
+    My_gray_pid_control_My.ramp_step,
+    MY_GRAY_RAMP_STEPS); /* 归一化进度对时间的导数。 */
+  float ramp_time_s = (float)MY_GRAY_RAMP_TIME_MS * 0.001f; /* 启动 S 曲线总时长，单位秒。 */
+  float accel_target; /* 由速度目标曲线求得的规划纵向加速度。 */
 
+  My_gray_pid_control_My.last_ramp_pwm = My_gray_pid_control_My.ramp_pwm;
   My_gray_pid_control_My.ramp_pwm =
     My_gray_pid_control_My.ramp_start_pwm +
     ((float)My_gray_pid_control_My.base_pwm - My_gray_pid_control_My.ramp_start_pwm) * progress;
-
+  accel_target = ramp_time_s > 0.0f
+                   ? ((float)My_gray_pid_control_My.base_pwm -
+                      My_gray_pid_control_My.ramp_start_pwm) * progress_rate / ramp_time_s
+                   : 0.0f;
+  if (My_gray_pid_control_My.stable_stop_enabled != 0U &&
+      My_gray_pid_control_My.stable_decelerating == 0U)
+  {
+    /* 任务 5/6 启动阶段把规划加速度前馈给钢球保持外环；任务 2 不启用该外环。 */
+    My_ball_balance_set_vehicle_accel_feedforward_My(accel_target);
+  }
   if (My_gray_pid_control_My.ramp_step < MY_GRAY_RAMP_STEPS)
   {
     My_gray_pid_control_My.ramp_step++;
@@ -123,10 +239,10 @@ uint8_t My_gray_read_My(void)
 void My_gray_pid_init_My(void)
 {
   My_pid_init_My(&My_gray_pid_control_My.pid,
-                 20.0f,
+                 7.0f,
                  0.0f,
-                 0.0f,
-                 100.0f,
+                 1.0f,
+                 50.0f,
                  MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT);
   My_gray_pid_control_My.base_pwm = MY_GRAY_PID_DEFAULT_BASE_PWM;
   My_gray_pid_control_My.correction_limit = MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT;
@@ -143,6 +259,7 @@ void My_gray_pid_init_My(void)
   My_gray_pid_control_My.ramp_step = MY_GRAY_RAMP_STEPS;
   My_gray_pid_control_My.ramp_start_pwm = 0.0f;
   My_gray_pid_control_My.ramp_pwm = 0.0f;
+  My_gray_pid_control_My.last_ramp_pwm = 0.0f;
   My_gray_pid_control_My.stable_stop_enabled = 0U;
   My_gray_pid_control_My.stable_decelerating = 0U;
   My_gray_pid_control_My.stable_decel_step = MY_GRAY_STABLE_DECEL_STEPS;
@@ -189,6 +306,7 @@ void My_gray_pid_start_My(void)
 {
   My_pid_reset_My(&My_gray_pid_control_My.pid);
   My_gray_pid_control_My.ramp_start_pwm = My_gray_pid_control_My.ramp_pwm;
+  My_gray_pid_control_My.last_ramp_pwm = My_gray_pid_control_My.ramp_start_pwm;
   My_gray_pid_control_My.ramp_step = 0U;
   My_gray_pid_control_My.stop_confirm_count = 0U;
   My_gray_pid_control_My.reverse_brake_cycles = 0U;
@@ -203,10 +321,13 @@ void My_gray_pid_start_My(void)
 void My_gray_pid_start_stable_My(void)
 {
   /*
-   * 先复用任务 2 的 PID、终点确认和启动 S 曲线复位，再切换为任务 5 专用的低速
-   * 与平滑停车模式。调用方已屏蔽 TIM6，中间状态不会被控制中断观察到。
+   * 先复用任务 2 的 PID、终点确认和启动 S 曲线复位，再切换为任务 5/6 共用的
+   * 稳定循迹与平滑停车模式。调用方已屏蔽 TIM6，中间状态不会被控制中断观察到。
    */
   My_gray_pid_start_My();
+  My_gray_pid_control_My.error = 0.0f;
+  My_gray_pid_control_My.correction = 0.0f;
+  My_gray_pid_control_My.line_detected = 0U;
   My_gray_pid_control_My.base_pwm = MY_GRAY_STABLE_BASE_PWM;
   My_gray_pid_control_My.stable_stop_enabled = 1U;
 }
@@ -225,18 +346,20 @@ void My_gray_pid_stop_My(void)
   My_gray_pid_control_My.ramp_step = MY_GRAY_RAMP_STEPS;
   My_gray_pid_control_My.ramp_start_pwm = 0.0f;
   My_gray_pid_control_My.ramp_pwm = 0.0f;
+  My_gray_pid_control_My.last_ramp_pwm = 0.0f;
   My_gray_pid_control_My.stable_stop_enabled = 0U;
   My_gray_pid_control_My.stable_decelerating = 0U;
   My_gray_pid_control_My.stable_decel_step = MY_GRAY_STABLE_DECEL_STEPS;
   My_gray_pid_control_My.stable_decel_start_pwm = 0.0f;
   My_pid_reset_My(&My_gray_pid_control_My.pid);
+  My_ball_balance_set_vehicle_accel_feedforward_My(0.0f);
   My_move_stop_My();
 }
 
 void My_gray_pid_start_external_My(void)
 {
   /*
-   * 任务 4 的速度由应用层 5 s S 型曲线逐周期给出，本接口只复位灰度位置环和
+   * 任务 4 的速度由应用层 7 s S 型加减速曲线逐周期给出，本接口只复位灰度位置环和
    * 任务 2 的停车/制动残留状态。enabled 保持 0，防止 My_gray_pid_update_My()
    * 在同一个 TIM6 周期误进入任务 2 的停止线、13 秒降速或内部启动曲线流程。
    */
@@ -251,6 +374,7 @@ void My_gray_pid_start_external_My(void)
   My_gray_pid_control_My.ramp_step = MY_GRAY_RAMP_STEPS;
   My_gray_pid_control_My.ramp_start_pwm = 0.0f;
   My_gray_pid_control_My.ramp_pwm = 0.0f;
+  My_gray_pid_control_My.last_ramp_pwm = 0.0f;
   My_gray_pid_control_My.stable_stop_enabled = 0U;
   My_gray_pid_control_My.stable_decelerating = 0U;
   My_gray_pid_control_My.stable_decel_step = MY_GRAY_STABLE_DECEL_STEPS;
@@ -291,6 +415,7 @@ static void My_gray_start_reverse_brake_My(void)
   My_gray_pid_control_My.ramp_step = MY_GRAY_RAMP_STEPS;
   My_gray_pid_control_My.ramp_start_pwm = 0.0f;
   My_gray_pid_control_My.ramp_pwm = 0.0f;
+  My_gray_pid_control_My.last_ramp_pwm = 0.0f;
   My_gray_pid_control_My.stable_decelerating = 0U;
   My_gray_pid_control_My.stable_decel_step = MY_GRAY_STABLE_DECEL_STEPS;
   My_gray_pid_control_My.stable_decel_start_pwm = 0.0f;
@@ -358,9 +483,9 @@ void My_gray_pid_update_external_pwm_My(float base_pwm)
   if (active_count == 0U)
   {
     /*
-     * 任务 4 的上层状态机严格限定 5 s 运行时间。丢线时不生成新的转向量，保持
+     * 任务 4 的上层状态机严格限定 7 s 运行时间。丢线时不生成新的转向量，保持
      * 上一次有效速度目标等待重新捕获灰度线，但仍使用本周期编码器反馈更新四轮
-     * 速度 PID；若传感器持续无效，5 s 边界仍会强制停车。
+     * 速度 PID；若传感器持续无效，7 s 边界仍会强制停车。
      */
     My_gray_pid_control_My.line_detected = 0U;
     My_move_velocity_pid_update_My();
@@ -399,10 +524,10 @@ void My_gray_pid_update_My(void)
   uint8_t gray_index;   /* 当前处理的灰度通道索引。 */
   uint8_t active_count = 0U; /* 当前检测到线的通道数量。 */
   int16_t weighted_sum = 0;  /* 所有有效通道的位置权重之和。 */
-  uint32_t elapsed_ms;       /* 当前中断读取的任务 2 运行时间快照，单位毫秒，用于判断是否进入低速段。 */
+  uint32_t elapsed_ms;       /* 当前中断读取的任务 2/5/6 运行时间快照，单位毫秒；仅任务 2 使用定时降速判断。 */
   float correction;          /* PID 计算后的转向修正量。 */
   float motion_scale;        /* 当前 S 曲线速度占目标基础速度的比例。 */
-  float decel_progress;      /* 任务 5 终点减速曲线的归一化进度。 */
+  float decel_progress;      /* 任务 5/6 终点减速曲线的归一化进度。 */
 
   /*
    * 停止线触发后，优先完成固定反向制动计时。该状态与循迹互斥，期间不再读取灰度
@@ -457,13 +582,14 @@ void My_gray_pid_update_My(void)
         if (My_gray_pid_control_My.stable_stop_enabled != 0U)
         {
           /*
-           * 任务 5 从终点确认瞬间的实际曲线 PWM 开始五次多项式减速，首周期输出
+           * 任务 5/6 从终点确认瞬间的实际曲线 PWM 开始五次多项式减速，首周期输出
            * 与前一周期连续，避免速度阶跃扰动钢球；减速期间锁定终点状态，不重复计数。
            */
           My_gray_pid_control_My.stable_decelerating = 1U;
           My_gray_pid_control_My.stable_decel_step = 0U;
           My_gray_pid_control_My.stable_decel_start_pwm =
             My_gray_pid_control_My.ramp_pwm;
+          My_gray_pid_control_My.last_ramp_pwm = My_gray_pid_control_My.ramp_pwm;
           My_gray_pid_control_My.stop_confirm_count = 0U;
         }
         else
@@ -498,7 +624,7 @@ void My_gray_pid_update_My(void)
   if (My_gray_pid_control_My.stable_decelerating != 0U)
   {
     /*
-     * 任务 5 的减速曲线两端一阶、二阶导数均为零。曲线完成后先把四轮指令清零并
+     * 任务 5/6 的减速曲线两端一阶、二阶导数均为零。曲线完成后先把四轮指令清零并
      * 进入 TB6612 短路制动，再冻结计时，确保显示时间包含完整的受控停车过程。
      */
     decel_progress = My_gray_s_curve_My(
@@ -506,6 +632,11 @@ void My_gray_pid_update_My(void)
       MY_GRAY_STABLE_DECEL_STEPS);
     My_gray_pid_control_My.ramp_pwm =
       My_gray_pid_control_My.stable_decel_start_pwm * (1.0f - decel_progress);
+    My_ball_balance_set_vehicle_accel_feedforward_My(
+      -My_gray_pid_control_My.stable_decel_start_pwm *
+      My_gray_s_curve_derivative_My(My_gray_pid_control_My.stable_decel_step,
+                                    MY_GRAY_STABLE_DECEL_STEPS) /
+      ((float)MY_GRAY_STABLE_DECEL_TIME_MS * 0.001f));
     if (My_gray_pid_control_My.stable_decel_step < MY_GRAY_STABLE_DECEL_STEPS)
     {
       My_gray_pid_control_My.stable_decel_step++;
@@ -520,11 +651,12 @@ void My_gray_pid_update_My(void)
   else
   {
     /*
-     * 任务 2 前 13 秒保持较高基础速度，之后切换到低速段；任务 5 的基础速度从
-     * 启动即等于该低速值，因此不会发生中途速度阶跃，利于钢球稳定。
+     * 只有任务 2 保留原有的定时降速；任务 5/6 从启动加速完成后一直保持各自的
+     * 目标速度，直到三连黑终点确认进入停车流程，避免在路线后段提前突然减速。
      */
     elapsed_ms = My_timer_get_elapsed_ms_My();
-    if ((elapsed_ms >= MY_GRAY_TASK2_SLOWDOWN_TIME_MS) &&
+    if ((My_gray_pid_control_My.stable_stop_enabled == 0U) &&
+        (elapsed_ms >= MY_GRAY_TASK2_SLOWDOWN_TIME_MS) &&
         (My_gray_pid_control_My.base_pwm > MY_GRAY_TASK2_SLOW_BASE_PWM))
     {
       My_gray_pid_control_My.base_pwm = MY_GRAY_TASK2_SLOW_BASE_PWM;
@@ -573,10 +705,25 @@ void My_gray_pid_update_My(void)
                      (float)My_gray_pid_control_My.base_pwm
                    : 0.0f;
   correction *= motion_scale;
+  if (My_gray_pid_control_My.stable_stop_enabled != 0U)
+  {
+    /* 任务 5/6 允许使用完整圆弧差速，但最大差速不超过当前前进目标。 */
+    correction = My_gray_limit_stable_correction_My(
+      correction,
+      My_gray_pid_control_My.ramp_pwm);
+  }
   My_gray_pid_control_My.correction = correction;
 
-  My_move_mecanum_inverse_My(My_gray_pid_control_My.ramp_pwm,
-                             0.0f,
-                             correction);
+  if (My_gray_pid_control_My.stable_stop_enabled != 0U)
+  {
+    /* 外侧轮保持目标、内侧轮减速；任务 2 继续使用原始 vx/vw 逆解。 */
+    My_gray_apply_stable_motion_My(My_gray_pid_control_My.ramp_pwm, correction);
+  }
+  else
+  {
+    My_move_mecanum_inverse_My(My_gray_pid_control_My.ramp_pwm,
+                               0.0f,
+                               correction);
+  }
   My_move_velocity_pid_update_My();
 }

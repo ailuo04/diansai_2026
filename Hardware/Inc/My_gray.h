@@ -1,4 +1,4 @@
-﻿#ifndef MY_GRAY_H
+#ifndef MY_GRAY_H
 #define MY_GRAY_H /* 防止灰度循迹接口头文件被重复包含。 */
 
 #ifdef __cplusplus
@@ -22,17 +22,18 @@ extern "C" {
 #define MY_GRAY_STOP_RIGHT_PATTERN ((uint8_t)(MY_GRAY_6_MASK | MY_GRAY_7_MASK | MY_GRAY_8_MASK)) /* 停车标志右侧候选三连黑组合。 */
 #define MY_GRAY_STOP_CONFIRM_CYCLES 5U /* 停车标志必须连续满足的 10 毫秒采样次数，用于过滤瞬时误判。 */
 
-#define MY_GRAY_PID_DEFAULT_BASE_PWM         400    /* 默认直行速度目标，单位为 10 ms 编码器计数。 */
-#define MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT 300.0f /* 灰度位置环默认速度修正绝对值上限。 */
+#define MY_GRAY_PID_DEFAULT_BASE_PWM         30    /* 默认直行速度目标，单位为 10 ms 编码器计数。 */
+#define MY_GRAY_PID_DEFAULT_CORRECTION_LIMIT 15.0f /* 灰度位置环默认速度修正绝对值上限。 */
 #define MY_GRAY_PID_DEFAULT_ACTIVE_LEVEL     0U     /* 默认以低电平表示检测到黑线。 */
-#define MY_GRAY_RAMP_TIME_MS                 2000U  /* 任务启动时 S 型速度曲线的持续时间，单位毫秒。 */
+#define MY_GRAY_RAMP_TIME_MS                 4000U  /* 任务启动时 S 型速度曲线的持续时间，单位毫秒。 */
 #define MY_GRAY_CONTROL_PERIOD_MS            10U    /* TIM6 灰度控制更新周期，单位毫秒。 */
-#define MY_GRAY_TASK2_SLOWDOWN_TIME_MS      13000U /* 任务 2 从启动计时起进入低速段的时刻，单位毫秒。 */
-#define MY_GRAY_TASK2_SLOW_BASE_PWM           250  /* 13 秒后的低速目标，单位为 10 ms 编码器计数。 */
-#define MY_GRAY_REVERSE_BRAKE_PWM            120 /* 识别停车标志后使用的反向速度目标，单位为 10 ms 编码器计数。 */
+#define MY_GRAY_TASK2_SLOWDOWN_TIME_MS      16000U /* 任务 2 从启动计时起进入低速段的时刻，单位毫秒。 */
+#define MY_GRAY_TASK2_SLOW_BASE_PWM           18  /* 任务 2 定时降速后的目标，单位为 10 ms 编码器计数。 */
+#define MY_GRAY_REVERSE_BRAKE_PWM            20 /* 识别停车标志后使用的反向速度目标，单位为 10 ms 编码器计数。 */
 #define MY_GRAY_REVERSE_BRAKE_TIME_MS        50U /* 反向制动持续时间，单位毫秒。 */
-#define MY_GRAY_STABLE_BASE_PWM               250 /* 任务 5 的低冲击速度目标，与任务 2 低速段一致。 */
-#define MY_GRAY_STABLE_DECEL_TIME_MS         800U /* 任务 5 识别终点后的 S 型减速时长，兼顾钢球扰动和停车距离。 */
+#define MY_GRAY_STABLE_BASE_PWM               25 /* 任务 5/6 的稳定循迹目标速度，终点确认前保持不变。 */
+#define MY_GRAY_STABLE_CORRECTION_STEP_LIMIT 2.5f /* 任务 5/6 每 10 ms 允许变化的转向差速量，兼顾圆弧转向和小球稳定。 */
+#define MY_GRAY_STABLE_DECEL_TIME_MS         4000U /* 任务 5/6 识别终点后的 S 型减速时长，兼顾钢球扰动和停车距离。 */
 
 typedef struct
 {
@@ -52,10 +53,11 @@ typedef struct
   uint16_t ramp_step;     /* 当前 S 曲线步号，范围 0 到 MY_GRAY_RAMP_STEPS。 */
   float ramp_start_pwm;   /* 本次启动加速曲线的起始速度目标。 */
   float ramp_pwm;         /* 当前经过 S 曲线平滑后的速度目标。 */
-  uint8_t stable_stop_enabled; /* 非零表示任务 5 使用 S 型减速停车，任务 2 保持原反向制动。 */
-  uint8_t stable_decelerating; /* 非零表示任务 5 已确认终点，正在执行 S 型减速。 */
-  uint16_t stable_decel_step;  /* 任务 5 当前减速曲线步号，仅由 10 ms 控制中断更新。 */
-  float stable_decel_start_pwm; /* 任务 5 确认终点瞬间的速度，用于无跳变地开始减速。 */
+  float last_ramp_pwm;    /* 上一周期速度目标，用于任务 5/6 计算规划纵向加速度。 */
+  uint8_t stable_stop_enabled; /* 非零表示任务 5/6 使用终点确认后的 S 型减速停车，任务 2 保持原反向制动。 */
+  uint8_t stable_decelerating; /* 非零表示任务 5/6 已确认终点，正在执行 S 型减速。 */
+  uint16_t stable_decel_step;  /* 任务 5/6 当前减速曲线步号，仅由 10 ms 控制中断更新。 */
+  float stable_decel_start_pwm; /* 任务 5/6 确认终点瞬间的速度，用于无跳变地开始减速。 */
 } My_gray_pid_control_t;
 
 extern volatile My_gray_pid_control_t My_gray_pid_control_My; /* TIM6 中断读写的灰度循迹控制器状态。 */
@@ -105,7 +107,7 @@ void My_gray_pid_set_steering_direction_My(int8_t direction);
 void My_gray_pid_start_My(void);
 
 /**
-  * @brief 启动任务 5 的低冲击 S 型加减速循迹。
+  * @brief 启动任务 5/6 共用的低冲击 S 型加减速循迹。
   * @details 路线通道、终点三连黑确认和最终短路制动与任务 2 相同；启动速度固定为
   *          MY_GRAY_STABLE_BASE_PWM，确认终点后使用五次多项式降至零并停止计时。
   */

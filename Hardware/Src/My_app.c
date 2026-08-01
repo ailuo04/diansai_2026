@@ -1,4 +1,4 @@
-﻿#include "My_app.h"
+#include "My_app.h"
 
 #include "HWT101.h"
 #include "My_ball_balance.h"
@@ -16,14 +16,15 @@
 
 #define MY_APP_GRAY_TRACKING_TASK 2U /* 任务 2 固定执行灰度循迹，其他任务保持停车。 */
 #define MY_APP_BALL_BALANCE_TASK  3U /* 任务 3 长按确认后启用钢球位置速度外环。 */
-#define MY_APP_S_CURVE_ZERO_TASK   4U /* 任务 4 执行 5 s 底盘 S 型速度曲线，并持续保持钢球 0 点。 */
+#define MY_APP_S_CURVE_ZERO_TASK   4U /* 任务 4 执行 7 s 底盘 S 型加减速曲线，并持续保持钢球 0 点。 */
 #define MY_APP_STABLE_TRACKING_TASK 5U /* 任务 5 复用任务 2 路线与终点判定，并使用 S 型起停保持钢球 0 点。 */
+#define MY_APP_START_TARGET_TRACKING_TASK 6U /* 任务 6 复用任务 5 循迹停车，并以确认后的前几帧位置作为钢球目标。 */
 
 #define MY_APP_TASK4_CONTROL_PERIOD_MS 10U   /* 任务 4 与 TIM6 一致的固定控制周期。 */
-#define MY_APP_TASK4_RUN_TIME_MS       8000U /* 底盘从启动到完全停车的总时长，包含加速和减速。 */
-#define MY_APP_TASK4_ACCEL_TIME_MS     4000U /* 五次多项式 S 型加速段时长。 */
-#define MY_APP_TASK4_DECEL_TIME_MS     4000U /* 五次多项式 S 型减速段时长。 */
-#define MY_APP_TASK4_CRUISE_PWM         300  /* 加速完成后的直行峰值 PWM，现场可按负载整定。 */
+#define MY_APP_TASK4_RUN_TIME_MS       8000U /* 底盘从启动到完全停车的总时长，包含 S 型加速和减速。 */
+#define MY_APP_TASK4_ACCEL_TIME_MS     2000U /* 五次多项式 S 型加速段时长。 */
+#define MY_APP_TASK4_DECEL_TIME_MS     2000U /* 五次多项式 S 型减速段时长。 */
+#define MY_APP_TASK4_CRUISE_PWM         19   /* 加速完成后的直行峰值速度目标，单位为每 10 ms 编码器计数。 */
 
 typedef struct
 {
@@ -34,8 +35,10 @@ typedef struct
 
 static My_app_context_t My_app_context_My; /* 主循环独占的任务选择、确认状态和灰度显示缓存。 */
 static volatile uint8_t My_app_ball_balance_enabled_My; /* TIM6 读取的任务 3 钢球平衡使能标志。 */
-static volatile uint8_t My_app_task4_running_My; /* 非零表示任务 4 的 5 s 底盘 S 曲线仍在执行。 */
-static volatile uint8_t My_app_zero_balance_enabled_My; /* 非零表示任务 4 或任务 5 已启用钢球 0 点保持。 */
+static volatile uint8_t My_app_task4_running_My; /* 非零表示任务 4 的 7 s 底盘 S 型加减速曲线仍在执行。 */
+static volatile uint8_t My_app_task4_balance_enabled_My; /* 非零表示任务 4 独立的钢球 0 点保持已启用。 */
+static volatile uint8_t My_app_zero_balance_enabled_My; /* 非零表示任务 5 已启用任务 5/6 共用 PID 的 0 点保持。 */
+static volatile uint8_t My_app_start_target_balance_enabled_My; /* 非零表示任务 6 已启用启动帧目标保持。 */
 static volatile uint32_t My_app_task4_elapsed_ms_My; /* TIM6 独占更新的任务 4 底盘运动累计时间。 */
 
 /**
@@ -50,7 +53,9 @@ static void My_app_reset_context_My(void)
   My_app_context_My.task_confirmed = 0U;
   My_app_ball_balance_enabled_My = 0U;
   My_app_task4_running_My = 0U;
+  My_app_task4_balance_enabled_My = 0U;
   My_app_zero_balance_enabled_My = 0U;
+  My_app_start_target_balance_enabled_My = 0U;
   My_app_task4_elapsed_ms_My = 0U;
   for (index = 0U; index < 8U; index++)
   {
@@ -96,26 +101,46 @@ static float My_app_task4_s_curve_My(float progress)
 }
 
 /**
-  * @brief 推进一次任务 4 的 5 s 底盘 S 型加减速灰度循迹状态机。
-  * @details 仅由 TIM6 每 10 ms 调用。前 1.5 s 平滑加速，中间 2 s 保持峰值，后
-  *          1.5 s 平滑减速；当前速度作为灰度循迹基础 PWM，转向由 Gray_4～Gray_8
-  *          的位置误差闭环修正。累计达到 5 s 后立即清零四轮输出并冻结任务计时。
+  * @brief 计算五次多项式 S 曲线对归一化时间的导数。
+  * @param progress 归一化时间进度，范围 0～1
+  * @retval 归一化速度比例对时间进度的导数
+  * @details 导数在曲线段起止均为零，用于把任务四的规划速度换算为钢球前馈所需的
+  *          纵向加速度；本函数只执行固定次数浮点运算，可由 TIM6 中断路径调用。
+  */
+static float My_app_task4_s_curve_derivative_My(float progress)
+{
+  if (progress <= 0.0f || progress >= 1.0f)
+  {
+    return 0.0f;
+  }
+
+  return 30.0f * progress * progress *
+    (1.0f - progress) * (1.0f - progress);
+}
+
+/**
+  * @brief 推进一次任务 4 的 7 s 底盘 S 型加减速灰度循迹状态机。
+  * @details 仅由 TIM6 每 10 ms 调用。前 2 s 使用五次多项式 S 型曲线加速，中间保持
+  *          峰值，后 2 s 使用同一曲线平滑减速；当前速度作为
+  *          灰度循迹基础目标，转向由 Gray_4～Gray_8 的位置误差闭环修正。累计达到
+  *          7 s 后立即清零四轮输出并冻结任务计时。
   *          钢球 0 点外环由任务确认后立即并行执行，本函数只读取 GPIO 灰度输入，
   *          不访问慢速外设，也不执行等待或打印。
   */
 static void My_app_task4_update_10ms_My(void)
 {
   uint32_t elapsed_ms = My_app_task4_elapsed_ms_My; /* 本周期开始时的任务 4 运动时间快照。 */
-  float speed_ratio; /* 当前加速、匀速或减速阶段对应的 0～1 速度比例。 */
-  float drive_pwm;   /* 本周期沿车体正方向下发给四轮的浮点 PWM。 */
+  float drive_pwm;   /* 本周期沿车体正方向下发给四轮的速度目标，单位为每 10 ms 编码器计数。 */
+  float drive_accel; /* 本周期底盘速度规划对应的纵向加速度，用于钢球平台前馈补偿。 */
 
   if (elapsed_ms >= MY_APP_TASK4_RUN_TIME_MS)
   {
     /*
-     * 5 s 边界清零底盘目标、速度 PID 和四路 PWM；钢球 0 点外环继续保持开启，
+     * 7 s 边界清零底盘目标、速度 PID 和四路 PWM；钢球 0 点外环继续保持开启，
      * 用于停车后收敛和抵抗平台残余振动。共享字段均由本 TIM6 中断独占更新。
      */
     My_gray_pid_stop_My();
+    My_ball_balance_set_vehicle_accel_feedforward_My(0.0f);
     My_app_task4_running_My = 0U;
     My_timer_stop_My();
     return;
@@ -123,31 +148,42 @@ static void My_app_task4_update_10ms_My(void)
 
   if (elapsed_ms < MY_APP_TASK4_ACCEL_TIME_MS)
   {
-    speed_ratio = My_app_task4_s_curve_My(
-      (float)elapsed_ms / (float)MY_APP_TASK4_ACCEL_TIME_MS);
+    float accel_progress = (float)elapsed_ms /
+      (float)MY_APP_TASK4_ACCEL_TIME_MS; /* 加速段从 0 递增到 1 的归一化时间。 */
+    float curve_slope = My_app_task4_s_curve_derivative_My(accel_progress); /* S 曲线对归一化时间的导数。 */
+
+    drive_pwm = (float)MY_APP_TASK4_CRUISE_PWM *
+                My_app_task4_s_curve_My(accel_progress);
+    drive_accel = ((float)MY_APP_TASK4_CRUISE_PWM * curve_slope) /
+                  ((float)MY_APP_TASK4_ACCEL_TIME_MS * 0.001f);
   }
   else if (elapsed_ms <
            (MY_APP_TASK4_RUN_TIME_MS - MY_APP_TASK4_DECEL_TIME_MS))
   {
-    speed_ratio = 1.0f;
+    drive_pwm = (float)MY_APP_TASK4_CRUISE_PWM;
+    drive_accel = 0.0f;
   }
   else
   {
     float decel_progress = (float)(elapsed_ms -
       (MY_APP_TASK4_RUN_TIME_MS - MY_APP_TASK4_DECEL_TIME_MS)) /
       (float)MY_APP_TASK4_DECEL_TIME_MS; /* 减速段从 0 递增到 1 的归一化时间。 */
+    float speed_ratio = 1.0f -
+                        My_app_task4_s_curve_My(decel_progress); /* 五次多项式得到的减速比例。 */
+    float curve_slope = My_app_task4_s_curve_derivative_My(decel_progress); /* S 曲线对归一化时间的导数。 */
 
-    speed_ratio = 1.0f - My_app_task4_s_curve_My(decel_progress);
+    drive_pwm = (float)MY_APP_TASK4_CRUISE_PWM * speed_ratio;
+    drive_accel = -((float)MY_APP_TASK4_CRUISE_PWM * curve_slope) /
+                  ((float)MY_APP_TASK4_DECEL_TIME_MS * 0.001f);
   }
-
-  drive_pwm = (float)MY_APP_TASK4_CRUISE_PWM * speed_ratio;
   /*
-   * 任务 4 的纵向速度仍由 5 s S 曲线约束，横向偏差则由灰度循迹 PID 修正；该接口
-   * 不启用任务 2 的停止线识别、13 秒降速或反向制动，保证任务 4 只由 5 s 状态机结束。
+   * 任务 4 的纵向速度由 7 s S 型曲线约束，横向偏差则由灰度循迹 PID 修正；该接口
+   * 不启用任务 2 的停止线识别、13 秒降速或反向制动，保证任务 4 只由定时状态机结束。
    */
   My_gray_pid_update_external_pwm_My(drive_pwm);
+  My_ball_balance_set_vehicle_accel_feedforward_My(drive_accel);
 
-  /* 累计量只在本中断更新，不与主循环进行读改写共享；末周期饱和到精确 5000 ms。 */
+  /* 累计量只在本中断更新，不与主循环进行读改写共享；末周期饱和到精确 7000 ms。 */
   if (elapsed_ms <=
       (MY_APP_TASK4_RUN_TIME_MS - MY_APP_TASK4_CONTROL_PERIOD_MS))
   {
@@ -190,7 +226,9 @@ static void My_app_apply_task_My(void)
 #endif
 
   My_app_task4_running_My = 0U;
+  My_app_task4_balance_enabled_My = 0U;
   My_app_zero_balance_enabled_My = 0U;
+  My_app_start_target_balance_enabled_My = 0U;
   My_app_task4_elapsed_ms_My = 0U;
 
   if (My_app_context_My.selected_task == MY_APP_BALL_BALANCE_TASK)
@@ -202,10 +240,10 @@ static void My_app_apply_task_My(void)
   else if (My_app_context_My.selected_task == MY_APP_S_CURVE_ZERO_TASK)
   {
     /*
-     * 任务 4 确认时先把钢球目标置为 0 mm，并立即开放 0 点外环；底盘 5 s S 型
+     * 任务 4 确认时先把钢球目标置为 0 mm，并立即开放 0 点外环；底盘 7 s S 型
      * 加减速作为灰度循迹基础速度，与钢球保持并行执行，停车后继续保持 0 点。
     */
-    My_ball_balance_reset_zero_control_My();
+    My_ball_balance_reset_task4_control_My();
 #if MY_APP_SHADOW_DEBUG_MODE == 0U
     My_gray_pid_start_external_My();
 #endif
@@ -214,7 +252,7 @@ static void My_app_apply_task_My(void)
 #if MY_APP_SHADOW_DEBUG_MODE == 0U
     My_app_task4_running_My = 1U;
 #endif
-    My_app_zero_balance_enabled_My = 1U;
+    My_app_task4_balance_enabled_My = 1U;
   }
   else if (My_app_context_My.selected_task == MY_APP_STABLE_TRACKING_TASK)
   {
@@ -230,6 +268,21 @@ static void My_app_apply_task_My(void)
     My_steering_set_balance_mode_My(1U);
     My_steering_set_target_angle_My(MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG);
     My_app_zero_balance_enabled_My = 1U;
+  }
+  else if (My_app_context_My.selected_task == MY_APP_START_TARGET_TRACKING_TASK)
+  {
+    /*
+     * 任务 6 的底盘行为与任务 5 完全一致：低速稳定循迹、三连黑终点确认和 S 型
+     * 停车。钢球目标改为确认后收到的前几帧合法位置平均值；采样、锁存和 PID 均
+     * 由 TIM6 执行，停车后仍继续保持该目标点。
+     */
+    My_ball_balance_reset_start_target_control_My();
+#if MY_APP_SHADOW_DEBUG_MODE == 0U
+    My_gray_pid_start_stable_My();
+#endif
+    My_steering_set_balance_mode_My(1U);
+    My_steering_set_target_angle_My(MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG);
+    My_app_start_target_balance_enabled_My = 1U;
   }
   else
   {
@@ -254,7 +307,8 @@ static void My_app_apply_task_My(void)
 /**
   * @brief 处理按键事件并完成一次性的任务确认。
   * @details 短按仅在未确认时循环任务号；首次长按释放后启动计时，并根据任务号
-  *          启停任务 2 循迹、任务 3 钢球控制、任务 4 定时曲线或任务 5 稳定循迹。
+  *          启停任务 2 循迹、任务 3 钢球控制、任务 4 定时曲线、任务 5 稳定循迹
+  *          或任务 6 启动目标循迹。
   *          任务选择状态只在主循环修改，实际控制使能
   *          通过临界区内的独立标志交给 TIM6 中断。
   */
@@ -323,8 +377,8 @@ HAL_StatusTypeDef My_app_init_My(void)
 
   /* 装载灰度控制参数；实测黑线为高电平，转向方向按当前底盘接线设置。 */
   My_gray_pid_init_My();
-  My_gray_pid_set_parameters_My(70.0f, 0.0f, 10.0f);
-  My_gray_pid_set_motion_My(400, 400.0f);
+  My_gray_pid_set_parameters_My(3.0f, 0.0f, 0.0f);
+  My_gray_pid_set_motion_My(30, 30.0f);
   My_gray_pid_set_active_level_My(1U);
   My_gray_pid_set_steering_direction_My(1);
   My_key_init_My();
@@ -387,9 +441,10 @@ void My_app_control_10ms_My(void)
 {
   /*
    * 先采集 TIM1 转向编码器和四路底盘编码器周期增量；任务 3 更新原有分段钢球目标，
-   * 任务 4 并行推进 5 s 底盘 S 型曲线和 0 点钢球外环，任务 5 则由灰度模块执行
-   * 与任务 2 相同的循迹和终点判定，并在停车阶段执行 S 型减速。随后执行转向位置
-   * 内环，最后更新任务 2/5 灰度循迹。全部操作均为常数时间，必须显著小于 10 ms。
+   * 任务 4 并行推进 7 s 底盘 S 型加减速曲线，任务 5 先由灰度模块完成启动/停车速度
+   * 规划和终点判定；任务 4 更新独立钢球外环，任务 5/6 更新共用参数的钢球外环，
+   * 使加速度前馈与本周期速度规划对齐。随后执行转向位置内环，全部操作均为常数
+   * 时间，必须显著小于 10 ms。
   */
   My_encoder_update_My();
   My_move_update_encoder_My();
@@ -411,13 +466,24 @@ void My_app_control_10ms_My(void)
     /* 任务 4 的底盘时间、S 曲线和灰度循迹只由 TIM6 更新，主循环不参与实时速度规划。 */
     My_app_task4_update_10ms_My();
   }
+  /* 任务 5 的启动或受控停车在此更新速度目标和规划加速度，供后续钢球外环同周期使用。 */
+  My_gray_pid_update_My();
+  if (My_app_task4_balance_enabled_My != 0U)
+  {
+    /* 任务 4 在行驶和停车后持续使用独立 PID 与前馈限幅保持钢球 0 点。 */
+    My_ball_balance_update_task4_10ms_My();
+  }
   if (My_app_zero_balance_enabled_My != 0U)
   {
-    /* 任务 4/5 在行驶和停车后都直接使用摄像头回传速度，把钢球保持在 0±4 mm。 */
+    /* 任务 5 使用与任务 6 共用的 PID 参数和前馈限幅，把钢球保持在 0 点。 */
     My_ball_balance_update_zero_10ms_My();
   }
+  if (My_app_start_target_balance_enabled_My != 0U)
+  {
+    /* 任务 6 先平均确认后的前几帧位置，随后在行驶和停车阶段保持锁存目标。 */
+    My_ball_balance_update_start_target_10ms_My();
+  }
   My_steering_update_10ms_My();
-  My_gray_pid_update_My();
 }
 
 /**

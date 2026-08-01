@@ -15,43 +15,58 @@ extern "C" {
 #define MY_BALL_POSITIVE_SWITCH_MIN_MM 40 /* 任务三第一段进入该位置后立即切换到 -50 mm。 */
 
 #define MY_BALL_ZERO_TARGET_MM                    0
+#define MY_BALL_START_TARGET_SAMPLE_FRAMES        5U /* 任务 6 确认后用于平均目标点的合法摄像头帧数。 */
 #define MY_BALL_ZERO_CONTROL_PERIOD_S             (0.010f) /* TIM6 固定控制周期，修改定时器后必须同步更新。 */
 
 /*
  * 任务 3 专用位置式 PID 参数。P/I 项使用摄像头返回的位置误差，D 项直接使用同一帧
  * 返回的钢球速度；任务切换时会重新装载这些参数，避免被任务 4/5 的 0 点保持参数覆盖。
  */
-#define MY_BALL_TASK3_PID_KP_DEG_PER_MM           (0.45f)  /* 任务 3 两段目标追踪的位置误差比例增益。 */
-#define MY_BALL_TASK3_PID_KI_DEG_PER_MM_S         (0.5f)   /* 任务 3 两段目标追踪的位置误差时间积分增益。 */
-#define MY_BALL_TASK3_PID_KD_DEG_PER_MM_S         (0.50f)  /* 任务 3 两段目标追踪的钢球速度微分反馈增益。 */
-#define MY_BALL_TASK3_INTEGRAL_LIMIT_MM_S         (1000.0f) /* 任务 3 位置误差时间积分的绝对限幅。 */
-#define MY_BALL_TASK3_INTEGRAL_DISTANCE_MM        (100.0f) /* 任务 3 允许积分的位置误差范围。 */
-#define MY_BALL_TASK3_INTEGRAL_SPEED_MM_S         (60.0f)  /* 任务 3 允许积分的钢球速度范围。 */
+#define MY_BALL_TASK3_PID_KP_DEG_PER_MM           (0.21f)  /* 任务 3 两段目标追踪的位置误差比例增益。 */
+#define MY_BALL_TASK3_PID_KI_DEG_PER_MM_S         (0.001f)   /* 任务 3 两段目标追踪的位置误差时间积分增益。 */
+#define MY_BALL_TASK3_PID_KD_DEG_PER_MM_S         (0.199f)  /* 任务 3 两段目标追踪的钢球速度微分反馈增益。 */
+#define MY_BALL_TASK3_INTEGRAL_LIMIT_MM_S         (300.0f) /* 任务 3 位置误差时间积分的绝对限幅。 */
+#define MY_BALL_TASK3_INTEGRAL_DISTANCE_MM        (80.0f) /* 任务 3 允许积分的位置误差范围。 */
+#define MY_BALL_TASK3_INTEGRAL_SPEED_MM_S         (50.0f)  /* 任务 3 允许积分的钢球速度范围。 */
 #define MY_BALL_TASK3_INTEGRAL_DECAY              (0.98f)  /* 任务 3 积分条件不满足时的逐周期释放比例。 */
 #define MY_BALL_TASK3_CORRECTION_LIMIT_DEG        (45.0f)  /* 任务 3 电机输出轴相对水平角的最大连续修正量。 */
 #define MY_BALL_TASK3_CORRECTION_STEP_DEG         (2.5f)   /* 任务 3 每 10 ms 允许变化的最大修正角。 */
 
 /*
- * 任务 4/5 专用 0 点保持 PID 参数。任务 3 与任务 4/5 使用不同 PID 实例和修正角历史，
- * 因此两类任务的参数、积分、微分与变化率限制状态互不影响。
+ * 任务 4 独立的 0 点保持 PID 与加速度前馈参数。该组参数和控制历史不与任务 5/6
+ * 共用，任务 4 的定时 S 曲线可单独整定而不改变稳定循迹任务的钢球控制效果。
  */
-#define MY_BALL_ZERO_PID_KP_DEG_PER_MM             (0.45f)  /* 位置误差比例增益，数值保持与原串级控制的小误差区一致。 */
-#define MY_BALL_ZERO_PID_KI_DEG_PER_MM_S           (0.5f) /* 位置误差时间积分增益，用于补偿平台水平零偏。 */
-#define MY_BALL_ZERO_PID_KD_DEG_PER_MM_S           (0.50f)  /* 钢球速度微分反馈增益；输出中按速度反方向施加。 */
-#define MY_BALL_ZERO_INTEGRAL_LIMIT_MM_S          (1000.0f) /* 位置误差时间积分的绝对限幅。 */
+#define MY_BALL_TASK4_PID_KP_DEG_PER_MM             (0.45f)  /* 任务 4 位置误差比例增益。 */
+#define MY_BALL_TASK4_PID_KI_DEG_PER_MM_S           (0.08f)  /* 任务 4 位置误差时间积分增益。 */
+#define MY_BALL_TASK4_PID_KD_DEG_PER_MM_S           (0.5f)   /* 任务 4 钢球速度微分反馈增益。 */
+#define MY_BALL_TASK4_INTEGRAL_LIMIT_MM_S          (1000.0f) /* 任务 4 位置误差积分绝对限幅。 */
+#define MY_BALL_TASK4_CORRECTION_LIMIT_DEG          (30.0f)  /* 任务 4 PID 修正角绝对限幅。 */
+#define MY_BALL_TASK4_ACCEL_FF_LIMIT_DEG             (8.0f)  /* 任务 4 加速度前馈角绝对限幅。 */
+
+/*
+ * 任务 5/6 共用的钢球位置 PID 与加速度前馈参数。两项任务仅目标位置不同：任务 5
+ * 固定保持 0 mm，任务 6 保持启动采样目标；PID 参数及前馈角绝对限幅保持一致。
+ */
+#define MY_BALL_TASK56_PID_KP_DEG_PER_MM             (0.45f)  /* 任务 5/6 共用的位置误差比例增益。 */
+#define MY_BALL_TASK56_PID_KI_DEG_PER_MM_S           (0.03f)  /* 任务 5/6 共用的位置误差时间积分增益。 */
+#define MY_BALL_TASK56_PID_KD_DEG_PER_MM_S           (0.5f)   /* 任务 5/6 共用的钢球速度微分反馈增益。 */
+#define MY_BALL_TASK56_INTEGRAL_LIMIT_MM_S          (1000.0f) /* 任务 5/6 共用的位置误差积分绝对限幅。 */
+#define MY_BALL_TASK56_CORRECTION_LIMIT_DEG          (30.0f)  /* 任务 5/6 共用的 PID 修正角绝对限幅。 */
+#define MY_BALL_TASK56_ACCEL_FF_LIMIT_DEG             (4.0f)  /* 任务 5/6 共用的加速度前馈角绝对限幅。 */
+
 #define MY_BALL_ZERO_INTEGRAL_DISTANCE_MM         (100.0f) /* 位置误差不超过 100 mm 时允许积分，仍受速度和积分限幅保护。 */
 #define MY_BALL_ZERO_INTEGRAL_SPEED_MM_S          (60.0f)  /* 只在低速时允许积分，避免运动中反冲。 */
 #define MY_BALL_ZERO_INTEGRAL_DECAY               (0.98f)  /* 积分条件不满足时逐周期释放历史偏置。 */
-#define MY_BALL_ZERO_CORRECTION_LIMIT_DEG         (45.0f)  /* 电机输出轴相对水平角的最大连续修正量。 */
 #define MY_BALL_ZERO_CORRECTION_STEP_DEG          (2.5f)   /* 每 10 ms 允许变化的最大修正角，抑制冲击。 */
-#define MY_BALL_ZERO_ARRIVE_DISTANCE_MM           (10.0f)   /* 进入中心保持状态的位置误差阈值。 */
-#define MY_BALL_ZERO_ARRIVE_SPEED_MM_S            (15.0f)  /* 进入中心保持状态的估计速度阈值。 */
+#define MY_BALL_ZERO_ARRIVE_DISTANCE_MM           (5.0f)   /* 进入中心保持状态的位置误差阈值。 */
+#define MY_BALL_ZERO_ARRIVE_SPEED_MM_S            (0.0f)  /* 进入中心保持状态的估计速度阈值。 */
+#define MY_BALL_ACCEL_FF_DIRECTION                (1.0f)  /* 小车正向加速到平台目标角的前馈方向，实车反向时改为 -1。 */
+#define MY_BALL_ACCEL_FF_DEG_PER_TARGET_ACCEL     (0.15f) /* 每单位规划加速度对应的电机输出轴前馈角，需实车标定。 */
 
 /*
  * ==================== 钢球控制调参区 ====================
- * 任务 3 的 +50 mm、-50 mm 两段使用 MY_BALL_TASK3_* 参数；任务 4/5 的 0 mm 保持
- * 使用 MY_BALL_ZERO_* 参数。两类任务各自保留 PID 和角度变化率历史，任务切换时只
- * 复位对应实例，避免积分、微分和现场调参互相串扰。
+ * 任务 3 使用 MY_BALL_TASK3_*，任务 4 使用 MY_BALL_TASK4_*，任务 5/6 共用
+ * MY_BALL_TASK56_*。三类控制各自按入口复位，避免积分、微分和现场调参互相串扰。
  */
 #define MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG (-95.0f) /* 平台实测水平角。 */
 #define MY_BALL_TERMINAL_MOTOR_ANGLE_DEG   (-114.0f) /* 终止时电机输出轴的绝对目标角度，单位度。 */
@@ -82,13 +97,15 @@ typedef struct
 {
   int16_t position_mm;             /**< 最近合法帧的钢球位置，左负右正，单位毫米。 */
   int16_t speed_mm_s;              /**< 摄像头帧携带的原始速度，是钢球 PID 的速度反馈来源。 */
-  int16_t target_position_mm;      /**< 当前钢球目标；任务 3 使用分段目标，任务 4/5 使用 0 mm。 */
+  int16_t target_position_mm;      /**< 当前钢球目标；任务 3 使用分段目标，任务 4/5 使用 0 mm，任务 6 使用启动采样目标。 */
   float position_speed_mm_s;       /**< 摄像头返回并完成物理限幅的钢球速度，单位毫米每秒。 */
   float measured_speed_mm_s;       /**< 本周期实际参与控制的钢球速度，单位毫米每秒。 */
   float pid_p_angle_deg;           /**< 钢球 PID 比例项经机构方向映射后的角度贡献。 */
   float pid_i_angle_deg;           /**< 钢球 PID 积分项经机构方向映射后的角度贡献。 */
   float pid_d_angle_deg;           /**< 摄像头速度微分项经机构方向映射后的角度贡献。 */
   float pid_output_angle_deg;      /**< 钢球 PID 限幅后、变化率限制前的目标修正角。 */
+  float vehicle_accel_target;      /**< 任务 4/5 当前规划纵向加速度，单位为速度目标每秒变化量。 */
+  float accel_feedforward_angle_deg; /**< 由规划纵向加速度换算并限幅后的平台前馈角。 */
   float distance_to_target_mm;     /**< 当前目标与测量位置之间的距离绝对值，单位毫米。 */
   float correction_angle_deg;      /**< 当前驱动、制动或保持动作对应的平台修正角。 */
   float target_motor_angle_deg;    /**< 下发给电机位置内环的目标输出轴角度，单位度。 */
@@ -104,9 +121,11 @@ typedef struct
   uint8_t positive_target_reached; /**< 非零表示位置进入 40～50 mm 区间，当前目标已切换到 -50 mm。 */
   uint8_t final_arrival_settling;  /**< 非零表示 -50 mm 已进入带滞回的最终稳定确认阶段。 */
   uint8_t final_arrival_confirm_count; /**< 已连续满足最终到点条件的新摄像头帧数量。 */
-  uint8_t negative_target_reached; /**< 非零表示 -50 mm 已稳定到点，控制器已锁存最终保持。 */
-  uint8_t terminal_angle_commanded; /**< 非零表示 -50 mm 已确认到点并锁存终止角度目标。 */
-  uint8_t terminal_angle_reached;   /**< 非零表示电机已到达终止角度允许误差范围并进入断电保持。 */
+  uint8_t negative_target_reached; /**< 非零表示 -50 mm 曾稳定到点；PID 仍持续实时保持。 */
+  uint8_t terminal_angle_commanded; /**< 兼容调试字段；任务 3 持续平衡模式下始终为零。 */
+  uint8_t terminal_angle_reached;   /**< 兼容调试字段；任务 3 持续平衡模式下始终为零。 */
+  uint8_t start_target_ready;       /**< 非零表示任务 6 已完成启动帧平均并锁存目标点。 */
+  uint8_t start_target_sample_count; /**< 任务 6 已累计参与平均的合法帧数。 */
 } My_ball_balance_debug_t;
 
 extern volatile My_ball_balance_debug_t My_ball_balance_debug_My;
@@ -118,8 +137,8 @@ extern volatile My_ball_balance_debug_t My_ball_balance_debug_My;
 extern volatile My_pid_t My_ball_task3_pid_My;
 
 /**
-  * @brief 任务 4/5 钢球 0 点保持外环专用 PID 实例。
-  * @details 只由任务 4/5 的 TIM6 控制路径更新；任务 4/5 启动时装载 MY_BALL_ZERO_* 参数。
+  * @brief 任务 5/6 共用的钢球位置外环 PID 实例。
+  * @details 任务 5 保持 0 点，任务 6 保持启动采样目标；二者装载同一组参数。
   */
 extern volatile My_pid_t My_ball_zero_pid_My;
 
@@ -138,11 +157,30 @@ void My_ball_balance_init_My(void);
 void My_ball_balance_reset_control_My(void);
 
 /**
-  * @brief 复位任务 4/5 共用的钢球 0 点控制状态。
-  * @details 保留最近一次摄像头测量，但把目标设为 0 mm，并清除任务 3 的分段、终止
-  *          和到点锁存标志；调用方若与 TIM6 并发，必须在外部短暂屏蔽中断。
+  * @brief 复位任务 5 的钢球 0 点控制状态，并装载任务 5/6 共用参数。
   */
 void My_ball_balance_reset_zero_control_My(void);
+
+/**
+  * @brief 复位任务 4 独立的钢球 0 点控制状态。
+  * @details 装载任务 4 专用 PID 参数并清除其历史；调用方负责与 TIM6 互斥。
+  */
+void My_ball_balance_reset_task4_control_My(void);
+
+/**
+  * @brief 设置任务 4/5/6 的小车纵向规划加速度前馈。
+  * @param accel_target_per_s 速度目标每秒变化量，正值表示小车沿任务前进方向加速
+  * @details 该量来自底盘速度规划，不是 IMU 实测加速度；函数仅保存定长浮点状态，
+  *          可在 TIM6 控制路径中调用。换算到电机角度的方向、比例和限幅由宏参数标定。
+  */
+void My_ball_balance_set_vehicle_accel_feedforward_My(float accel_target_per_s);
+
+/**
+  * @brief 复位任务 6 的启动帧目标采样和平衡控制状态。
+  * @details 任务确认临界区内调用，从确认后的下一帧合法数据开始累计 5 帧位置平均值；
+  *          函数只重置内存和 PID 状态，不访问外设、不阻塞，调用方负责与 TIM6 互斥。
+  */
+void My_ball_balance_reset_start_target_control_My(void);
 
 /**
   * @brief 向钢球协议解析器输入一段 USART3 字节流。
@@ -163,12 +201,25 @@ void My_ball_balance_feed_My(const uint8_t *data, uint16_t length);
 void My_ball_balance_update_10ms_My(void);
 
 /**
-  * @brief 执行一次任务 4/5 共用的钢球 0 点位置式 PID 控制。
-  * @details 仅由 TIM6 周期中断调用，任务 4/5 行驶和停车阶段都会执行。PID 的 P/I
+  * @brief 执行一次任务 5 的钢球 0 点位置式 PID 控制。
+  * @details 仅由 TIM6 周期中断调用，使用任务 5/6 共用 PID。PID 的 P/I
   *          项使用摄像头位置误差，D 项直接使用同一帧返回的反向钢球速度反馈。
   *          通信超时后清除 PID 历史并按角度变化率平滑回到水平。
   */
 void My_ball_balance_update_zero_10ms_My(void);
+
+/**
+  * @brief 执行一次任务 4 独立的钢球 0 点位置式 PID 控制。
+  * @details 使用任务 4 专用 PID 参数、历史状态和加速度前馈角绝对限幅。
+  */
+void My_ball_balance_update_task4_10ms_My(void);
+
+/**
+  * @brief 执行一次任务 6 启动帧目标等待或固定目标平衡控制。
+  * @details 仅由 TIM6 周期中断调用；目标未锁存时保持平台水平，锁存后持续运行位置
+  *          PID。函数不阻塞、不打印、不分配动态内存，也不访问慢速通信外设。
+  */
+void My_ball_balance_update_start_target_10ms_My(void);
 
 #ifdef __cplusplus
 }
