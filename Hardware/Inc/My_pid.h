@@ -53,6 +53,23 @@ void My_pid_reset_My(volatile My_pid_t *pid);
 float My_pid_calc_position_My(volatile My_pid_t *pid, float target, float actual);
 
 /**
+  * @brief 使用外部测量微分反馈执行位置式 PID 计算。
+  * @param pid PID 结构体指针
+  * @param target 目标值
+  * @param actual 实际值
+  * @param actual_derivative 实际值的变化速度，D 项按其反方向反馈
+  * @param integration_period_s 本次积分时间，单位秒；小于等于 0 时暂停积分
+  * @retval 本次完成积分抗饱和和输出限幅后的 PID 输出
+  * @details 适用于传感器可直接提供速度的控制对象，控制律为
+  *          Kp×误差 + Ki×误差时间积分 - Kd×实际速度，避免对量化位置再次差分。
+  */
+float My_pid_calc_position_with_derivative_My(volatile My_pid_t *pid,
+                                               float target,
+                                               float actual,
+                                               float actual_derivative,
+                                               float integration_period_s);
+
+/**
   * @brief 角度 PID 计算，误差自动折算到 -180 到 180 度。
   * @param pid PID 结构体指针
   * @param target 目标角度，单位度

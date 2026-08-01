@@ -46,7 +46,7 @@ static void My_steering_refresh_limit_My(void)
 }
 
 /**
-  * @brief 将浮点 PID 输出转换为 TIM4_CH3 的有符号 PWM 指令。
+  * @brief 将浮点 PID 输出转换为 TIM8_CH4 的有符号 PWM 指令。
   * @param value PID 浮点输出
   * @retval 限制在 -999～999 范围内的有符号 PWM
   */
@@ -143,77 +143,17 @@ static float My_steering_calc_balance_pid_My(int32_t error_count,
 }
 
 /**
-  * @brief 把平衡模式控制量抬升到当前方向可克服摩擦的最小 PWM。
-  * @param pid_output 已限幅的浮点 PID 输出
-  * @param error_count 当前目标计数减实际计数
-  * @param actual_delta_count 最近 10 ms 实际位置变化量
-  * @retval 加入静止启动力或运动摩擦补偿后的有符号 PWM
-  * @details 正反方向分别保留独立标定值。编码器几乎不动时使用启动力，已经运动
-  *          时使用较低的运行补偿；只抬升幅值，不改变 PID 已决定的制动方向。
-  */
-static int16_t My_steering_apply_balance_friction_My(float pid_output,
-                                                     int32_t error_count,
-                                                     int32_t actual_delta_count)
-{
-  int16_t command = My_steering_float_to_pwm_My(pid_output); /* PID 原始有符号 PWM。 */
-  int32_t delta_abs = (actual_delta_count < 0) ? -actual_delta_count : actual_delta_count; /* 判断机构是否已经运动。 */
-  int16_t minimum_pwm; /* 当前方向和运动状态对应的最小有效 PWM。 */
-  int16_t command_abs; /* 原始 PWM 的绝对值。 */
-
-  if (command == 0)
-  {
-    if (error_count > 0)
-    {
-      command = 1;
-    }
-    else if (error_count < 0)
-    {
-      command = -1;
-    }
-    else
-    {
-      My_steering_control_My.friction_compensation_active = 0U;
-      return 0;
-    }
-  }
-
-  if (command > 0)
-  {
-    minimum_pwm = (delta_abs <= MY_STEERING_BALANCE_MOVING_DELTA_COUNT)
-      ? MY_STEERING_BALANCE_BREAKAWAY_PWM_POS
-      : MY_STEERING_BALANCE_RUNNING_PWM_POS;
-    command_abs = command;
-  }
-  else
-  {
-    minimum_pwm = (delta_abs <= MY_STEERING_BALANCE_MOVING_DELTA_COUNT)
-      ? MY_STEERING_BALANCE_BREAKAWAY_PWM_NEG
-      : MY_STEERING_BALANCE_RUNNING_PWM_NEG;
-    command_abs = (int16_t)-command;
-  }
-
-  if (command_abs < minimum_pwm)
-  {
-    My_steering_control_My.friction_compensation_active = 1U;
-    return (command > 0) ? minimum_pwm : (int16_t)-minimum_pwm;
-  }
-
-  My_steering_control_My.friction_compensation_active = 0U;
-  return command;
-}
-
-/**
   * @brief 向转向电机驱动器写入方向和 PWM。
   * @param command 有符号 PWM，正负表示逻辑方向
-  * @details 每次先把 TIM4_CH3 比较值清零，再切换 Steering_1A/1B，防止带载
+  * @details 每次先把 TIM8_CH4 比较值清零，再切换 Steering_1A/1B，防止带载
   *          直接换向。默认正方向为 1A=1、1B=0；motor_direction 可整体反转。
   */
 static void My_steering_write_output_My(int16_t command)
 {
   int32_t mapped_command = (int32_t)command * (int32_t)My_steering_control_My.motor_direction; /* 按当前电机接线方向映射后的有符号 PWM 指令。 */
-  uint16_t duty; /* 写入 TIM4_CH3 比较寄存器的 PWM 占空比绝对值。 */
+  uint16_t duty; /* 写入 TIM8_CH4 比较寄存器的 PWM 占空比绝对值。 */
 
-  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 0U);
+  __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, 0U);
 
   if (mapped_command > 0)
   {
@@ -235,7 +175,7 @@ static void My_steering_write_output_My(int16_t command)
     duty = 0U;
   }
 
-  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, duty);
+  __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_4, duty);
 }
 
 HAL_StatusTypeDef My_steering_init_My(void)
@@ -255,13 +195,12 @@ HAL_StatusTypeDef My_steering_init_My(void)
   My_steering_control_My.zero_ready = 0U;
   My_steering_control_My.in_deadband = 0U;
   My_steering_control_My.balance_mode = 0U;
-  My_steering_control_My.friction_compensation_active = 0U;
 
   /* 默认参数仅建立保守的计数位置 P 环；实车使用前应根据负载和编码器分辨率整定。 */
-  My_pid_init_My(&My_steering_control_My.pid, 0.10f, 0.01f, 0.1f, 5000.0f, 300.0f);
+  My_pid_init_My(&My_steering_control_My.pid, 0.04f, 0.01f, 0.0f, 1000.0f, 500.0f);
   My_steering_write_output_My(0);
 
-  if (HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_3) != HAL_OK)
+  if (HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_4) != HAL_OK)
   {
     return HAL_ERROR;
   }
@@ -314,7 +253,6 @@ void My_steering_set_balance_mode_My(uint8_t enabled)
   My_steering_control_My.previous_actual_count = My_steering_control_My.actual_count;
   My_steering_control_My.actual_delta_count = 0;
   My_steering_control_My.in_deadband = 0U;
-  My_steering_control_My.friction_compensation_active = 0U;
   My_pid_reset_My(&My_steering_control_My.pid);
   if (interrupt_mask == 0U)
   {
@@ -345,7 +283,6 @@ void My_steering_set_zero_My(void)
   My_steering_refresh_limit_My();
   My_steering_control_My.zero_ready = 1U;
   My_steering_control_My.in_deadband = 0U;
-  My_steering_control_My.friction_compensation_active = 0U;
   My_pid_reset_My(&My_steering_control_My.pid);
   if (interrupt_mask == 0U)
   {
@@ -396,7 +333,6 @@ HAL_StatusTypeDef My_steering_start_My(int32_t target_count)
   My_steering_control_My.in_deadband = 0U;
   My_steering_control_My.previous_actual_count = My_steering_control_My.actual_count;
   My_steering_control_My.actual_delta_count = 0;
-  My_steering_control_My.friction_compensation_active = 0U;
   My_steering_control_My.enabled = 1U;
   if (interrupt_mask == 0U)
   {
@@ -480,7 +416,6 @@ void My_steering_stop_My(void)
   My_steering_control_My.in_deadband = 0U;
   My_steering_control_My.previous_actual_count = My_steering_control_My.actual_count;
   My_steering_control_My.actual_delta_count = 0;
-  My_steering_control_My.friction_compensation_active = 0U;
   My_pid_reset_My(&My_steering_control_My.pid);
   My_steering_write_output_My(0);
   if (interrupt_mask == 0U)
@@ -529,24 +464,20 @@ void My_steering_update_10ms_My(void)
     /*
      * 钢球平衡需要平台能响应远小于普通定位死区的角度修正。微死区内清除积分并
      * 停止输出，避免编码器噪声驱动电机；微死区外持续闭环，不使用滞回断电，
-     * 并通过最小 PWM 补偿解决小误差下克服不了静摩擦的问题。
+     * 死区外直接采用编码器位置 PID 的实际输出，不再附加最低启动 PWM。
      */
     if (error_abs <= stop_count)
     {
       My_pid_reset_My(&My_steering_control_My.pid);
       My_steering_control_My.pwm_output = 0;
       My_steering_control_My.in_deadband = 1U;
-      My_steering_control_My.friction_compensation_active = 0U;
       My_steering_write_output_My(0);
       return;
     }
 
     My_steering_control_My.in_deadband = 0U;
     pid_output = My_steering_calc_balance_pid_My(error_count, actual_delta_count);
-    My_steering_control_My.pwm_output = My_steering_apply_balance_friction_My(
-      pid_output,
-      error_count,
-      actual_delta_count);
+    My_steering_control_My.pwm_output = My_steering_float_to_pwm_My(pid_output);
     My_steering_write_output_My(My_steering_control_My.pwm_output);
     return;
   }

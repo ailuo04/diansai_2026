@@ -10,7 +10,7 @@ extern "C" {
 
 #include <stdint.h>
 
-#define MY_STEERING_PWM_MAX 999 /* TIM4 周期为 999，对应允许写入的最大比较值。 */
+#define MY_STEERING_PWM_MAX 999 /* TIM8 周期为 999，对应允许写入的最大比较值。 */
 
 /*
  * 到位后使用带滞回的位置死区：误差进入 0.5 度时清除 PID 并关闭驱动，只有
@@ -20,18 +20,8 @@ extern "C" {
 #define MY_STEERING_STOP_DEADBAND_DEG   0.5f /* 位置误差进入该角度范围后关闭电机，单位为度。 */
 #define MY_STEERING_RESUME_DEADBAND_DEG 0.7f /* 到位保持后误差超过该角度才恢复闭环，单位为度。 */
 
-/*
- * 钢球平衡时平台必须持续接受小角度修正，不能沿用普通定位模式的 0.5° 停止死区。
- * 新手阶段只需要调 MY_STEERING_TUNE_START_PWM：小角度推不动就加，目标附近抖就减。
- * 如果实测正反方向差别很大，再展开下面四个正反向底层 PWM 单独标定。
- */
-#define MY_STEERING_TUNE_START_PWM                80 /* 平衡模式最小启动 PWM，现场优先只改这个。 */
+/* 钢球平衡使用更小的停止死区，死区外直接采用编码器位置 PID 的实际输出。 */
 #define MY_STEERING_BALANCE_DEADBAND_DEG          0.15f /* 平衡模式允许的电机输出轴微小误差，单位为度。 */
-#define MY_STEERING_BALANCE_MOVING_DELTA_COUNT       2L /* 10 ms 内超过该计数变化量时认为机构已经运动。 */
-#define MY_STEERING_BALANCE_BREAKAWAY_PWM_POS MY_STEERING_TUNE_START_PWM /* 正方向静止起动所需的最小 PWM。 */
-#define MY_STEERING_BALANCE_BREAKAWAY_PWM_NEG MY_STEERING_TUNE_START_PWM /* 负方向静止起动所需的最小 PWM。 */
-#define MY_STEERING_BALANCE_RUNNING_PWM_POS   MY_STEERING_TUNE_START_PWM /* 正方向运动后克服摩擦所需的最小 PWM。 */
-#define MY_STEERING_BALANCE_RUNNING_PWM_NEG   MY_STEERING_TUNE_START_PWM /* 负方向运动后克服摩擦所需的最小 PWM。 */
 
 /**
   * @brief TIM1 编码器转向电机的位置环运行状态。
@@ -56,15 +46,14 @@ typedef struct
   uint8_t enabled;           /**< 非零表示位置环允许驱动电机。 */
   uint8_t zero_ready;        /**< 非零表示已通过固定起点或回零流程建立可信相对零点。 */
   uint8_t in_deadband;       /**< 非零表示已进入到位死区，PID 积分和电机输出保持为零。 */
-  uint8_t balance_mode;      /**< 非零表示使用钢球平衡专用微死区和摩擦补偿。 */
-  uint8_t friction_compensation_active; /**< 非零表示当前 PWM 已由静摩擦补偿抬升。 */
+  uint8_t balance_mode;      /**< 非零表示使用钢球平衡专用微死区并直接输出位置 PID。 */
 } My_steering_control_t;
 
 extern volatile My_steering_control_t My_steering_control_My; /* TIM6 中断更新的转向位置环状态。 */
 
 /**
-  * @brief 初始化 TIM1 编码器对应的转向电机位置环并启动 TIM4_CH3 PWM。
-  * @details 调用前必须完成 GPIO、TIM1、TIM4 和编码器初始化。初始化后目标为
+  * @brief 初始化 TIM1 编码器对应的转向电机位置环并启动 TIM8_CH4 PWM。
+  * @details 调用前必须完成 GPIO、TIM1、TIM8 和编码器初始化。初始化后目标为
   *          当前编码器位置，位置环保持关闭，PWM 为零，零点和活动范围均未就绪，
   *          因此不会在上电时把未知机械位置误认为水平位置并主动驱动电机。
   * @retval HAL_OK 表示 PWM 启动成功，HAL_ERROR 表示启动失败

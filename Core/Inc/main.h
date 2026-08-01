@@ -65,6 +65,8 @@ void Error_Handler(void);
 #define HWT101_SCL_GPIO_Port GPIOC
 #define HWT101_SDA_Pin GPIO_PIN_1
 #define HWT101_SDA_GPIO_Port GPIOC
+#define Encoder_2B_Pin GPIO_PIN_5
+#define Encoder_2B_GPIO_Port GPIOA
 #define MOTOR_3A_Pin GPIO_PIN_13
 #define MOTOR_3A_GPIO_Port GPIOF
 #define MOTOR_3B_Pin GPIO_PIN_14
@@ -77,6 +79,10 @@ void Error_Handler(void);
 #define Key_GPIO_Port GPIOG
 #define Steering_1B_Pin GPIO_PIN_7
 #define Steering_1B_GPIO_Port GPIOE
+#define Encoder_4A_Pin GPIO_PIN_12
+#define Encoder_4A_GPIO_Port GPIOD
+#define Encoder_4B_Pin GPIO_PIN_13
+#define Encoder_4B_GPIO_Port GPIOD
 #define MOTOR_1A_Pin GPIO_PIN_4
 #define MOTOR_1A_GPIO_Port GPIOG
 #define MOTOR_2A_Pin GPIO_PIN_5
@@ -85,6 +91,12 @@ void Error_Handler(void);
 #define MOTOR_1B_GPIO_Port GPIOG
 #define MOTOR_2B_Pin GPIO_PIN_7
 #define MOTOR_2B_GPIO_Port GPIOG
+#define Encoder_1B_Pin GPIO_PIN_8
+#define Encoder_1B_GPIO_Port GPIOA
+#define Encoder_1B_EXTI_IRQn EXTI9_5_IRQn
+#define Encoder_1A_Pin GPIO_PIN_9
+#define Encoder_1A_GPIO_Port GPIOA
+#define Encoder_1A_EXTI_IRQn EXTI9_5_IRQn
 #define Steering_1A_Pin GPIO_PIN_0
 #define Steering_1A_GPIO_Port GPIOD
 #define Gray_1_Pin GPIO_PIN_6
@@ -97,6 +109,12 @@ void Error_Handler(void);
 #define Gray_4_GPIO_Port GPIOG
 #define Gray_5_Pin GPIO_PIN_15
 #define Gray_5_GPIO_Port GPIOG
+#define Encoder_2A_Pin GPIO_PIN_3
+#define Encoder_2A_GPIO_Port GPIOB
+#define Encoder_3A_Pin GPIO_PIN_4
+#define Encoder_3A_GPIO_Port GPIOB
+#define Encoder_3B_Pin GPIO_PIN_5
+#define Encoder_3B_GPIO_Port GPIOB
 #define Gray_6_Pin GPIO_PIN_8
 #define Gray_6_GPIO_Port GPIOB
 #define Gray_7_Pin GPIO_PIN_9

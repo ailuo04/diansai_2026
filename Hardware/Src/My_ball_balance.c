@@ -6,17 +6,16 @@
 #include <string.h>
 
 #define MY_BALL_POSITION_ABS_LIMIT_MM 125 /* 摄像头协议定义的平台中心到左右端点最大距离。 */
-#define MY_BALL_POSITION_SPEED_INTERVAL_MS 20U /* 至少累计 10 ms 位置变化再求速度，降低毫米量化噪声。 */
 
 volatile My_ball_balance_debug_t My_ball_balance_debug_My; /* 供 Keil Watch 观察的摄像头和外环状态。 */
+volatile My_pid_t My_ball_task3_pid_My; /* 任务 3 分段目标追踪专用的位置式 PID 参数和历史状态。 */
+volatile My_pid_t My_ball_zero_pid_My; /* 任务 4/5 钢球 0 点保持专用的位置式 PID 参数和历史状态。 */
 
 static uint8_t My_ball_frame_buffer_My[MY_BALL_FRAME_LENGTH]; /* 主循环流式重组中的候选固定长度帧。 */
 static uint8_t My_ball_parser_index_My; /* 候选帧已缓存字节数，仅由主循环访问。 */
-static uint32_t My_ball_speed_last_frame_count_My; /* 速度估算器已经观察过的合法帧计数。 */
-static uint32_t My_ball_speed_reference_ms_My; /* 位置差分速度参考点对应的毫秒时刻。 */
-static int16_t My_ball_speed_reference_position_mm_My; /* 位置差分速度参考点，单位毫米。 */
-static uint8_t My_ball_speed_reference_ready_My; /* 非零表示位置差分参考点已经建立。 */
 static uint32_t My_ball_final_arrival_last_frame_count_My; /* 最终到点确认已经检查过的合法帧序号。 */
+static float My_ball_task3_correction_My; /* 任务 3 PID 上一周期实际下发的电机输出轴修正角。 */
+static float My_ball_zero_correction_My; /* 任务 4/5 PID 上一周期实际下发的电机输出轴修正角。 */
 
 /**
   * @brief 判断字节是否为十进制数字字符。
@@ -161,163 +160,161 @@ static float My_ball_abs_My(float value)
 }
 
 /**
-  * @brief 返回浮点值的方向符号。
-  * @param value 待判断方向的数值
-  * @retval 正数返回 1，负数返回 -1，零返回 0
+  * @brief 按固定最大步长把当前值移动到目标值。
+  * @param current_value 当前值
+  * @param target_value 目标值
+  * @param maximum_step 单周期允许变化的正步长
+  * @retval 完成单周期变化率限制后的新值
+  * @details 本函数由 TIM6 中断路径调用，只进行定长比较和加减运算；用于阻止
+  *          钢球位置 PID 目标角因测量噪声、目标切换或通信恢复产生瞬时大阶跃。
   */
-static float My_ball_sign_My(float value)
+static float My_ball_move_toward_My(float current_value,
+                                    float target_value,
+                                    float maximum_step)
 {
-  if (value > 0.0f)
+  if (target_value > current_value + maximum_step)
   {
-    return 1.0f;
+    return current_value + maximum_step;
   }
-  if (value < 0.0f)
+  if (target_value < current_value - maximum_step)
   {
-    return -1.0f;
+    return current_value - maximum_step;
   }
 
-  return 0.0f;
+  return target_value;
 }
 
 /**
-  * @brief 按固定步长把平台修正角平滑收敛到水平零修正。
-  * @param correction_angle_deg 当前已经下发的平台修正角，单位度
-  * @retval 本周期允许下发的新修正角，单位度
-  * @details 仅用于最终目标到点窗口，避免制动角直接跳回水平角引起平台快速反向；
-  *          本函数运行在 TIM6 中断路径，只执行定长比较和加减运算。
+  * @brief 按指定参数重新装载钢球位置外环 PID 并清除输出历史。
+  * @param pid 当前任务独占的 PID 参数和历史状态
+  * @param correction 当前任务独占的上一周期实际修正角
+  * @param kp 位置误差比例增益
+  * @param ki 位置误差时间积分增益
+  * @param kd 摄像头速度微分反馈增益
+  * @param integral_limit 位置误差积分限幅
+  * @param output_limit 输出轴修正角限幅
+  * @details 任务切换前由主循环在外部临界区调用，也会在初始化阶段调用。本函数只
+  *          更新 PID 参数和私有修正角，不访问外设、不阻塞；避免沿用上一次运行的
+  *          积分、微分历史和角度输出。
   */
-static float My_ball_step_correction_to_level_My(float correction_angle_deg)
+static void My_ball_load_pid_state_My(volatile My_pid_t *pid,
+                                      float *correction,
+                                      float kp,
+                                      float ki,
+                                      float kd,
+                                      float integral_limit,
+                                      float output_limit)
 {
-  if (correction_angle_deg > MY_BALL_FINAL_LEVEL_STEP_DEG)
-  {
-    return correction_angle_deg - MY_BALL_FINAL_LEVEL_STEP_DEG;
-  }
-  if (correction_angle_deg < -MY_BALL_FINAL_LEVEL_STEP_DEG)
-  {
-    return correction_angle_deg + MY_BALL_FINAL_LEVEL_STEP_DEG;
-  }
-
-  return 0.0f;
+  My_pid_init_My(pid,
+                 kp,
+                 ki,
+                 kd,
+                 integral_limit,
+                 output_limit);
+  *correction = 0.0f;
 }
 
 /**
-  * @brief 用相邻摄像头位置和到达时间计算控制所需的钢球速度。
-  * @retval 本周期用于驱动和制动判断的速度，单位毫米每秒
-  * @details 摄像头帧内速度在实测运动过程中可能长期为零，因此控制器不能把它作为
-  *          唯一制动依据。位置差分至少累计 50 ms 后再更新，避免 1 mm 量化在高帧率
-  *          下被放大成尖峰；首个有效差分窗口建立前暂用协议速度作为启动过渡。
+  * @brief 装载任务 3 分段钢球控制专用 PID 参数。
+  * @details 任务 3 目标会从 +50 mm 切到 -50 mm，参数独立于任务 4/5 的 0 点保持；
+  *          进入任务 3 时调用本函数可避免 0 点保持调参影响分段追踪。
   */
-static float My_ball_update_measured_speed_My(void)
+static void My_ball_load_task3_pid_state_My(void)
 {
-  uint32_t frame_count = My_ball_balance_debug_My.valid_frame_count; /* 当前最新合法帧序号。 */
-
-  if (frame_count != My_ball_speed_last_frame_count_My)
-  {
-    uint32_t update_ms = My_ball_balance_debug_My.last_update_ms; /* 最新位置对应的到达时刻。 */
-    int16_t position_mm = My_ball_balance_debug_My.position_mm; /* 最新钢球位置快照。 */
-
-    My_ball_speed_last_frame_count_My = frame_count;
-    if (My_ball_speed_reference_ready_My == 0U)
-    {
-      My_ball_speed_reference_position_mm_My = position_mm;
-      My_ball_speed_reference_ms_My = update_ms;
-      My_ball_speed_reference_ready_My = 1U;
-    }
-    else
-    {
-      uint32_t interval_ms = update_ms - My_ball_speed_reference_ms_My; /* 当前差分窗口时长。 */
-
-      if (interval_ms >= MY_BALL_POSITION_SPEED_INTERVAL_MS &&
-          interval_ms <= MY_BALL_COMMUNICATION_TIMEOUT_MS)
-      {
-        int32_t position_delta_mm = (int32_t)position_mm -
-          (int32_t)My_ball_speed_reference_position_mm_My; /* 差分窗口内的有符号位移。 */
-        float position_speed = (float)(position_delta_mm * 1000L) /
-          (float)interval_ms; /* 位移除以实际到达时间，避免假定摄像头固定帧率。 */
-
-        My_ball_balance_debug_My.position_speed_mm_s = My_ball_limit_symmetric_My(
-          position_speed,
-          MY_BALL_SPEED_ABS_LIMIT_MM_S);
-        My_ball_balance_debug_My.position_speed_ready = 1U;
-        My_ball_speed_reference_position_mm_My = position_mm;
-        My_ball_speed_reference_ms_My = update_ms;
-      }
-      else if (interval_ms > MY_BALL_COMMUNICATION_TIMEOUT_MS)
-      {
-        /* 帧间隔已经失去连续运动意义，重新建立参考点，禁止把长时间位移误算成瞬时速度。 */
-        My_ball_speed_reference_position_mm_My = position_mm;
-        My_ball_speed_reference_ms_My = update_ms;
-        My_ball_balance_debug_My.position_speed_mm_s = 0.0f;
-        My_ball_balance_debug_My.position_speed_ready = 0U;
-      }
-    }
-  }
-
-  if (My_ball_balance_debug_My.position_speed_ready != 0U)
-  {
-    return My_ball_balance_debug_My.position_speed_mm_s;
-  }
-
-  return My_ball_limit_symmetric_My(
-    (float)My_ball_balance_debug_My.speed_mm_s,
-    MY_BALL_SPEED_ABS_LIMIT_MM_S);
+  My_ball_load_pid_state_My(&My_ball_task3_pid_My,
+                            &My_ball_task3_correction_My,
+                            MY_BALL_TASK3_PID_KP_DEG_PER_MM,
+                            MY_BALL_TASK3_PID_KI_DEG_PER_MM_S,
+                            MY_BALL_TASK3_PID_KD_DEG_PER_MM_S,
+                            MY_BALL_TASK3_INTEGRAL_LIMIT_MM_S,
+                            MY_BALL_TASK3_CORRECTION_LIMIT_DEG);
 }
 
 /**
-  * @brief 按距离和速度选择保持、驱动或制动动作。
-  * @param position_error_mm 当前目标位置减测量位置，正负表示目标方向
-  * @param measured_speed_mm_s 钢球测量速度，正负表示实际运动方向
-  * @param drive_angle_deg 当前目标阶段朝目标方向施加的驱动角
-  * @param brake_angle_deg 当前目标阶段施加到速度反方向的制动角
-  * @param max_speed_mm_s 当前目标阶段允许的最大运动速度
-  * @param brake_distance_mm 当前目标阶段开始反向制动的剩余距离
-  * @retval 相对水平角的修正量，单位度
-  * @details 到点且低速时回到水平；钢球运动方向错误时直接制动；朝目标运动时，
-  *          速度达到上限或距离进入制动区也立即制动；其余情况只给固定小驱动角。
-  *          本函数由 TIM6 中断路径调用，只执行定长比较和浮点运算，不阻塞、不分配内存。
+  * @brief 装载任务 4/5 钢球 0 点保持专用 PID 参数。
+  * @details 任务 4/5 的目标固定为 0 mm，需要和任务 3 分段追踪分开整定；进入
+  *          任务 4 或任务 5 时调用本函数可清除任务 3 遗留积分并恢复 0 点保持参数。
   */
-static float My_ball_select_correction_My(float position_error_mm,
-                                          float measured_speed_mm_s,
-                                          float drive_angle_deg,
-                                          float brake_angle_deg,
-                                          float max_speed_mm_s,
-                                          float brake_distance_mm)
+static void My_ball_load_zero_pid_state_My(void)
 {
-  float distance_abs = My_ball_abs_My(position_error_mm); /* 当前距离目标的绝对距离。 */
-  float speed_abs = My_ball_abs_My(measured_speed_mm_s); /* 当前钢球速度绝对值。 */
-  uint8_t moving_toward_target =
-    (position_error_mm * measured_speed_mm_s > 0.0f) ? 1U : 0U; /* 误差与速度同号表示正在接近目标。 */
-
-  if (distance_abs <= MY_BALL_ARRIVE_DISTANCE_MM &&
-      speed_abs <= MY_BALL_ARRIVE_SPEED_MM_S)
-  {
-    /* 位置和速度同时满足到点条件才回水平，避免高速掠过目标时误判完成。 */
-    My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
-    return 0.0f;
-  }
-
-  if (speed_abs > 0.0f &&
-      (moving_toward_target == 0U ||
-       speed_abs >= max_speed_mm_s ||
-       distance_abs <= brake_distance_mm))
-  {
-    /*
-     * 制动角始终指向当前速度的反方向。运动方向错误时无需等待阈值；朝目标运动时，
-     * 速度超限或进入近距离区间任一条件成立就立即反向，防止继续加速冲过目标。
-     */
-    My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_BRAKE;
-    return MY_BALL_CONTROL_DIRECTION *
-      (-My_ball_sign_My(measured_speed_mm_s) * brake_angle_deg);
-  }
-
-  /* 尚未到点且不需要制动时，只施加固定小角度，不再使用多层比例、积分或卡滞参数。 */
-  My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_DRIVE;
-  return MY_BALL_CONTROL_DIRECTION *
-    (My_ball_sign_My(position_error_mm) * drive_angle_deg);
+  My_ball_load_pid_state_My(&My_ball_zero_pid_My,
+                            &My_ball_zero_correction_My,
+                            MY_BALL_ZERO_PID_KP_DEG_PER_MM,
+                            MY_BALL_ZERO_PID_KI_DEG_PER_MM_S,
+                            MY_BALL_ZERO_PID_KD_DEG_PER_MM_S,
+                            MY_BALL_ZERO_INTEGRAL_LIMIT_MM_S,
+                            MY_BALL_ZERO_CORRECTION_LIMIT_DEG);
 }
 
 /**
-  * @brief 初始化摄像头帧解析、位置差分测速和钢球控制状态。
+  * @brief 使用摄像头位置和速度计算当前任务已装载参数的位置式 PID 修正角。
+  * @param pid 当前任务独占的 PID 参数和历史状态
+  * @param correction 当前任务独占的上一周期实际修正角
+  * @param target_position_mm 当前目标位置，单位毫米
+  * @param measured_position_mm 摄像头返回的位置，单位毫米
+  * @param measured_speed_mm_s 摄像头同一帧返回的速度，单位毫米每秒
+  * @param integral_distance_mm 允许积分的位置误差绝对值上限
+  * @param integral_speed_mm_s 允许积分的速度绝对值上限
+  * @param integral_decay 暂停新增积分时的历史积分释放比例
+  * @param correction_step_deg 单周期修正角变化上限
+  * @retval 完成输出限幅和单周期变化率限制后的电机输出轴修正角
+  * @details 任务切换时已提前装载任务 3 或任务 4/5 的独立 PID 参数。P/I 项使用位置
+  *          误差，D 项直接使用摄像头速度；只在目标附近且低速时积分，其他状态逐步
+  *          释放积分。函数只执行定长浮点运算，由 TIM6 中断调用，不阻塞、不打印、
+  *          不分配内存，也不访问通信外设。
+  */
+static float My_ball_calculate_pid_correction_My(volatile My_pid_t *pid,
+                                                 float *correction,
+                                                 float target_position_mm,
+                                                 float measured_position_mm,
+                                                 float measured_speed_mm_s,
+                                                 float integral_distance_mm,
+                                                 float integral_speed_mm_s,
+                                                 float integral_decay,
+                                                 float correction_step_deg)
+{
+  float position_error = target_position_mm - measured_position_mm; /* 当前目标位置误差。 */
+  float integration_period; /* 满足积分条件时为 10 ms，否则为零以暂停新增积分。 */
+  float pid_output; /* 完成抗饱和和限幅后、尚未映射机构方向的 PID 输出。 */
+  float requested_correction; /* 完成机构方向映射、尚未进行变化率限制的修正角。 */
+
+  if (My_ball_abs_My(position_error) <= integral_distance_mm &&
+      My_ball_abs_My(measured_speed_mm_s) <= integral_speed_mm_s)
+  {
+    integration_period = MY_BALL_ZERO_CONTROL_PERIOD_S;
+  }
+  else
+  {
+    /* 大偏差或高速运动时释放历史积分，防止换向和制动阶段出现积分拖尾。 */
+    pid->integral *= integral_decay;
+    integration_period = 0.0f;
+  }
+
+  pid_output = My_pid_calc_position_with_derivative_My(
+    pid,
+    target_position_mm,
+    measured_position_mm,
+    measured_speed_mm_s,
+    integration_period);
+  requested_correction = MY_BALL_CONTROL_DIRECTION * pid_output;
+
+  /* 分项调试值与实际控制使用同一组 PID 状态，便于通过 Keil Watch 现场整定。 */
+  My_ball_balance_debug_My.pid_p_angle_deg = MY_BALL_CONTROL_DIRECTION *
+    pid->kp * pid->error;
+  My_ball_balance_debug_My.pid_i_angle_deg = MY_BALL_CONTROL_DIRECTION *
+    pid->ki * pid->integral;
+  My_ball_balance_debug_My.pid_d_angle_deg = MY_BALL_CONTROL_DIRECTION *
+    (-pid->kd * measured_speed_mm_s);
+  My_ball_balance_debug_My.pid_output_angle_deg = requested_correction;
+
+  *correction = My_ball_move_toward_My(*correction,
+                                      requested_correction,
+                                      correction_step_deg);
+  return *correction;
+}
+
+/**
+  * @brief 初始化摄像头帧解析、位置速度反馈和钢球 PID 控制状态。
   * @details 本函数在 TIM6 中断启动前调用，只清零内存状态，不访问阻塞外设。
   */
 void My_ball_balance_init_My(void)
@@ -332,10 +329,6 @@ void My_ball_balance_init_My(void)
   My_ball_balance_debug_My.invalid_frame_count = 0U;
   My_ball_balance_debug_My.parser_index = 0U;
   My_ball_balance_debug_My.has_measurement = 0U;
-  My_ball_speed_last_frame_count_My = 0U;
-  My_ball_speed_reference_ms_My = 0U;
-  My_ball_speed_reference_position_mm_My = 0;
-  My_ball_speed_reference_ready_My = 0U;
   My_ball_balance_reset_control_My();
 }
 
@@ -348,6 +341,10 @@ void My_ball_balance_reset_control_My(void)
   My_ball_balance_debug_My.target_position_mm = MY_BALL_POSITIVE_TARGET_MM;
   My_ball_balance_debug_My.position_speed_mm_s = 0.0f;
   My_ball_balance_debug_My.measured_speed_mm_s = 0.0f;
+  My_ball_balance_debug_My.pid_p_angle_deg = 0.0f;
+  My_ball_balance_debug_My.pid_i_angle_deg = 0.0f;
+  My_ball_balance_debug_My.pid_d_angle_deg = 0.0f;
+  My_ball_balance_debug_My.pid_output_angle_deg = 0.0f;
   My_ball_balance_debug_My.distance_to_target_mm = 0.0f;
   My_ball_balance_debug_My.correction_angle_deg = 0.0f;
   My_ball_balance_debug_My.target_motor_angle_deg = MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG;
@@ -361,11 +358,20 @@ void My_ball_balance_reset_control_My(void)
   My_ball_balance_debug_My.negative_target_reached = 0U;
   My_ball_balance_debug_My.terminal_angle_commanded = 0U;
   My_ball_balance_debug_My.terminal_angle_reached = 0U;
-  My_ball_speed_last_frame_count_My = My_ball_balance_debug_My.valid_frame_count;
-  My_ball_speed_reference_ms_My = My_ball_balance_debug_My.last_update_ms;
-  My_ball_speed_reference_position_mm_My = My_ball_balance_debug_My.position_mm;
-  My_ball_speed_reference_ready_My = My_ball_balance_debug_My.has_measurement;
   My_ball_final_arrival_last_frame_count_My = My_ball_balance_debug_My.valid_frame_count;
+  My_ball_load_task3_pid_state_My();
+}
+
+/**
+  * @brief 复位任务 4/5 共用的钢球 0 点保持状态。
+  * @details 先复用任务 3 的完整状态清理，再把唯一目标改为 0 mm；本函数不访问
+  *          阻塞外设，调用方负责与 TIM6 中断互斥。
+  */
+void My_ball_balance_reset_zero_control_My(void)
+{
+  My_ball_balance_reset_control_My();
+  My_ball_balance_debug_My.target_position_mm = MY_BALL_ZERO_TARGET_MM;
+  My_ball_load_zero_pid_state_My();
 }
 
 /**
@@ -452,20 +458,20 @@ void My_ball_balance_feed_My(const uint8_t *data, uint16_t length)
 }
 
 /**
-  * @brief 在 TIM6 的 10 ms 周期中执行 +50 mm 到 -50 mm 的三态控制。
-  * @details 中断来源由上层回调确认。本函数读取主循环原子提交的测量快照，按距离和
-  *          速度选择保持、固定小角度驱动或反向制动，再更新转向位置环目标。
-  *          中断上下文中不执行阻塞、延时、打印、动态分配或不定长循环。
+  * @brief 在 TIM6 的 10 ms 周期中执行任务 3 的 +50 mm 到 -50 mm 分段位置式 PID。
+  * @details 中断来源由上层回调确认。本函数读取主循环原子提交的摄像头位置、速度和
+  *          时间戳，两段均调用任务 4/5 同款 PID；到达 +50 mm 后清除 PID 历史并切换
+  *          -50 mm 目标，到达 -50 mm 后再锁存终止角。中断中不阻塞、不打印、不分配
+  *          动态内存，也不访问慢速通信外设。
   */
 void My_ball_balance_update_10ms_My(void)
 {
-  float requested_angle; /* 本周期按保持、驱动或制动动作直接生成的电机目标角。 */
-  uint32_t now_ms = HAL_GetTick(); /* 本控制周期用于判断通信新鲜度的毫秒快照。 */
+  float requested_angle = MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG; /* 本周期下发给转向位置环的绝对目标角。 */
+  uint32_t now_ms = HAL_GetTick(); /* 本周期用于判断摄像头帧新鲜度的毫秒快照。 */
 
   /*
-   * -40 mm 只负责触发终止角度目标；到达目标前继续使用平衡模式的最小驱动力
-   * 克服机构静摩擦。实际角度进入允许误差后再切换普通定位模式，由其到位
-   * 死区清零 PID 和 PWM。该判断位于通信新鲜度分支之前，丢帧后也能完成收敛。
+   * 终止角由 -50 mm 连续低速到点后触发。实际角度到位后切回普通定位模式，由
+   * 转向位置环死区清零 PID 和 PWM；该判断不依赖新摄像头帧，丢帧后也能完成收尾。
    */
   if (My_ball_balance_debug_My.terminal_angle_commanded != 0U &&
       My_ball_balance_debug_My.terminal_angle_reached == 0U &&
@@ -478,60 +484,36 @@ void My_ball_balance_update_10ms_My(void)
   }
 
   /*
-   * 原始位置、协议速度和时间戳由主循环在短临界区内整帧提交；当前运行在 TIM6
-   * 中断中，不会被主循环抢占，因此可直接读取一致快照。控制速度优先由位置变化
-   * 和实际帧间隔计算，避免协议速度长期为零时丢失制动依据；USART3 长时间没有
-   * 合法帧时按通信超时处理，防止继续使用停留在端点的旧位置。
+   * 位置、速度和时间戳由主循环在短临界区内按同一摄像头帧整体提交。当前运行在
+   * TIM6 中断中，主循环不能并发改写，因此可直接读取一致快照；超过通信时限后
+   * 禁止继续使用旧位置和旧速度。
    */
   if (My_ball_balance_debug_My.has_measurement != 0U &&
-      (uint32_t)(now_ms - My_ball_balance_debug_My.last_update_ms) <= MY_BALL_COMMUNICATION_TIMEOUT_MS)
+      (uint32_t)(now_ms - My_ball_balance_debug_My.last_update_ms) <=
+        MY_BALL_COMMUNICATION_TIMEOUT_MS)
   {
-    float position_error; /* 当前阶段位置目标与摄像头测量值之差，单位毫米。 */
-    float measured_speed; /* 位置差分优先、协议速度兜底的制动判断速度。 */
-    float correction;     /* 三态规则选择出的固定驱动角、制动角或零修正。 */
-    float drive_angle;    /* 当前目标阶段的驱动角，两段可分别现场整定。 */
-    float brake_angle;    /* 当前目标阶段的制动角，第二段取软限位内可用的较大值。 */
-    float max_speed;      /* 当前目标阶段允许的最高速度，第二段取更低值以提前控速。 */
-    float brake_distance; /* 当前目标阶段的制动距离，第二段取更大值以补偿长行程惯性。 */
-    uint8_t final_arrival_window; /* 非零表示 -50 mm 的位置和速度已进入最终到点窗口。 */
-
-    measured_speed = My_ball_update_measured_speed_My();
-    position_error = (float)My_ball_balance_debug_My.target_position_mm -
-      (float)My_ball_balance_debug_My.position_mm; /* 当前阶段目标减当前位置。 */
+    float measured_speed = My_ball_limit_symmetric_My(
+      (float)My_ball_balance_debug_My.speed_mm_s,
+      MY_BALL_SPEED_ABS_LIMIT_MM_S); /* 摄像头帧速度经物理限幅后的 PID 速度反馈。 */
+    float position_error = (float)My_ball_balance_debug_My.target_position_mm -
+      (float)My_ball_balance_debug_My.position_mm; /* 当前分段目标减摄像头位置。 */
+    float correction; /* 任务 3 专用 PID 计算并完成变化率限制后的平台修正角。 */
+    uint8_t final_arrival_window; /* 非零表示 -50 mm 的位置和速度均进入到点窗口。 */
 
     /*
-     * 第一段只有在 +50 mm 位置误差和速度同时进入到点范围后才切换到 -50 mm。
-     * 这样高速掠过 +50 mm 时仍保持当前目标并执行制动，不会把“经过”误判成“到达”。
-     * 阶段标志只由本 TIM6 中断路径写入，不与主循环进行读改写共享。
+     * 第一段位置进入 40～50 mm 区间就立即切换目标，不再等待 +50 mm 完全稳定；
+     * 目标阶跃不会产生微分冲击，因为 D 项直接使用实际速度；仍需清除第一段积分，
+     * 防止其方向与第二段初始控制相反。
      */
     if (My_ball_balance_debug_My.positive_target_reached == 0U &&
-        My_ball_abs_My(position_error) <= MY_BALL_ARRIVE_DISTANCE_MM &&
-        My_ball_abs_My(measured_speed) <= MY_BALL_ARRIVE_SPEED_MM_S)
+        My_ball_balance_debug_My.position_mm >= MY_BALL_POSITIVE_SWITCH_MIN_MM &&
+        My_ball_balance_debug_My.position_mm <= MY_BALL_POSITIVE_TARGET_MM)
     {
       My_ball_balance_debug_My.positive_target_reached = 1U;
       My_ball_balance_debug_My.target_position_mm = MY_BALL_NEGATIVE_TARGET_MM;
-      position_error = (float)My_ball_balance_debug_My.target_position_mm -
+      My_pid_reset_My(&My_ball_task3_pid_My);
+      position_error = (float)MY_BALL_NEGATIVE_TARGET_MM -
         (float)My_ball_balance_debug_My.position_mm;
-    }
-
-    /*
-     * 两段分别选择驱动角、制动角、速度阈值和制动距离。第二段行程约 100 mm，
-     * 可独立降低驱动角或速度阈值并增大制动距离，避免调整第一段后相互影响。
-     * 阶段参数不改变电机位置内环的角度软限位、PWM 限幅和方向保护。
-     */
-    if (My_ball_balance_debug_My.positive_target_reached == 0U)
-    {
-      drive_angle = MY_BALL_POSITIVE_DRIVE_ANGLE_DEG;
-      brake_angle = MY_BALL_POSITIVE_BRAKE_ANGLE_DEG;
-      max_speed = MY_BALL_POSITIVE_MAX_SPEED_MM_S;
-      brake_distance = MY_BALL_POSITIVE_BRAKE_DISTANCE_MM;
-    }
-    else
-    {
-      drive_angle = MY_BALL_NEGATIVE_DRIVE_ANGLE_DEG;
-      brake_angle = MY_BALL_NEGATIVE_BRAKE_ANGLE_DEG;
-      max_speed = MY_BALL_NEGATIVE_MAX_SPEED_MM_S;
-      brake_distance = MY_BALL_NEGATIVE_BRAKE_DISTANCE_MM;
     }
 
     final_arrival_window = (uint8_t)(
@@ -541,94 +523,51 @@ void My_ball_balance_update_10ms_My(void)
 
     if (My_ball_balance_debug_My.terminal_angle_commanded != 0U)
     {
-      /* 终止状态已锁存，持续下发终止角度，不再允许钢球外环修改电机目标。 */
-      My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
+      /* 终止状态只在 -50 mm 到点后锁存，之后不再允许钢球 PID 改写电机目标。 */
       correction = MY_BALL_TERMINAL_MOTOR_ANGLE_DEG -
         MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG;
-    }
-    else if (My_ball_balance_debug_My.positive_target_reached != 0U &&
-             My_ball_balance_debug_My.position_mm <= MY_BALL_TERMINAL_POSITION_MM &&
-             My_ball_abs_My(measured_speed) <= MY_BALL_ARRIVE_SPEED_MM_S)
-    {
-      /* 到达 -40 mm 且速度已降到安全范围后，只触发一次终止角度指令。 */
-      My_ball_balance_debug_My.terminal_angle_commanded = 1U;
-      My_ball_balance_debug_My.terminal_angle_reached = 0U;
-      My_ball_balance_debug_My.target_position_mm = MY_BALL_TERMINAL_POSITION_MM;
-      My_ball_balance_debug_My.final_arrival_settling = 0U;
-      My_ball_balance_debug_My.final_arrival_start_ms = 0U;
-      My_ball_balance_debug_My.final_arrival_confirm_count = 0U;
       My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
-      position_error = (float)MY_BALL_TERMINAL_POSITION_MM -
-        (float)My_ball_balance_debug_My.position_mm;
-      correction = MY_BALL_TERMINAL_MOTOR_ANGLE_DEG -
-        MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG;
-    }
-    else if (My_ball_balance_debug_My.negative_target_reached != 0U)
-    {
-      /* 最终到点已经锁存，后续摄像头位置量化噪声不得重新触发任何外环动作。 */
-      My_ball_balance_debug_My.final_arrival_settling = 1U;
-      My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
-      correction = 0.0f;
-    }
-    else if (My_ball_balance_debug_My.positive_target_reached != 0U &&
-             My_ball_balance_debug_My.final_arrival_settling == 0U &&
-             final_arrival_window != 0U)
-    {
-      /* 第二段首次进入到点窗口时锁定平滑回水平流程，避免下一周期立刻重新制动。 */
-      My_ball_balance_debug_My.final_arrival_settling = 1U;
-      My_ball_balance_debug_My.final_arrival_start_ms = 0U;
-      My_ball_balance_debug_My.final_arrival_confirm_count = 0U;
-      My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
-      correction = My_ball_step_correction_to_level_My(
-        My_ball_balance_debug_My.correction_angle_deg);
-    }
-    else if (My_ball_balance_debug_My.final_arrival_settling != 0U)
-    {
-      if (My_ball_abs_My(position_error) > MY_BALL_FINAL_HOLD_RELEASE_DISTANCE_MM)
-      {
-        /* 偏离最终目标超过滞回距离，说明确实离开终态窗口，恢复普通三态控制。 */
-        My_ball_balance_debug_My.final_arrival_settling = 0U;
-        My_ball_balance_debug_My.final_arrival_start_ms = 0U;
-        My_ball_balance_debug_My.final_arrival_confirm_count = 0U;
-        correction = My_ball_select_correction_My(position_error,
-                                                   measured_speed,
-                                                   drive_angle,
-                                                   brake_angle,
-                                                   max_speed,
-                                                   brake_distance);
-      }
-      else
-      {
-        /* 终态确认期间即使速度估计短时抖动，也只允许修正角单向回到水平。 */
-        My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
-        correction = My_ball_step_correction_to_level_My(
-          My_ball_balance_debug_My.correction_angle_deg);
-      }
     }
     else
     {
-      correction = My_ball_select_correction_My(position_error,
-                                                 measured_speed,
-                                                 drive_angle,
-                                                 brake_angle,
-                                                 max_speed,
-                                                 brake_distance);
-    }
+      correction = My_ball_calculate_pid_correction_My(
+        &My_ball_task3_pid_My,
+        &My_ball_task3_correction_My,
+        (float)My_ball_balance_debug_My.target_position_mm,
+        (float)My_ball_balance_debug_My.position_mm,
+        measured_speed,
+        MY_BALL_TASK3_INTEGRAL_DISTANCE_MM,
+        MY_BALL_TASK3_INTEGRAL_SPEED_MM_S,
+        MY_BALL_TASK3_INTEGRAL_DECAY,
+        MY_BALL_TASK3_CORRECTION_STEP_DEG);
 
-    if (My_ball_balance_debug_My.positive_target_reached != 0U &&
-        My_ball_balance_debug_My.terminal_angle_commanded == 0U &&
-        My_ball_balance_debug_My.negative_target_reached == 0U &&
-        My_ball_balance_debug_My.final_arrival_settling != 0U)
-    {
-      /* 只用新合法帧累计确认次数，禁止同一帧在多个 10 ms 中断中重复计数。 */
-      if (My_ball_balance_debug_My.valid_frame_count !=
-          My_ball_final_arrival_last_frame_count_My)
+      if (final_arrival_window != 0U)
+      {
+        My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
+      }
+      else if (measured_speed *
+                 (MY_BALL_CONTROL_DIRECTION * correction) < 0.0f)
+      {
+        /* PID 作用方向与钢球运动方向相反时，当前周期正在主动制动。 */
+        My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_BRAKE;
+      }
+      else
+      {
+        My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_DRIVE;
+      }
+
+      /*
+       * 第二段只按新合法帧累计连续到点次数，禁止同一帧被多个 10 ms 中断重复计数。
+       * 确认期间 PID 仍持续闭环，只有达到完整位置、速度和持续时间条件后才退出外环。
+       */
+      if (My_ball_balance_debug_My.positive_target_reached != 0U &&
+          My_ball_balance_debug_My.valid_frame_count !=
+            My_ball_final_arrival_last_frame_count_My)
       {
         My_ball_final_arrival_last_frame_count_My =
           My_ball_balance_debug_My.valid_frame_count;
-        if (correction == 0.0f &&
-            My_ball_abs_My(position_error) <= MY_BALL_ARRIVE_DISTANCE_MM &&
-            My_ball_abs_My(measured_speed) <= MY_BALL_ARRIVE_SPEED_MM_S)
+        My_ball_balance_debug_My.final_arrival_settling = final_arrival_window;
+        if (final_arrival_window != 0U)
         {
           if (My_ball_balance_debug_My.final_arrival_confirm_count == 0U)
           {
@@ -646,21 +585,29 @@ void My_ball_balance_update_10ms_My(void)
                 My_ball_balance_debug_My.final_arrival_start_ms) >=
                 MY_BALL_FINAL_ARRIVE_CONFIRM_MS)
           {
-            /* 最终完成只允许单向锁存，后续单帧量化噪声不能重新触发驱动或制动。 */
+            /* 到达 -50 mm 后才结束 PID 全过程并切换到既有终止角收尾。 */
             My_ball_balance_debug_My.negative_target_reached = 1U;
+            My_ball_balance_debug_My.terminal_angle_commanded = 1U;
+            My_ball_balance_debug_My.terminal_angle_reached = 0U;
+            My_pid_reset_My(&My_ball_task3_pid_My);
+            correction = MY_BALL_TERMINAL_MOTOR_ANGLE_DEG -
+              MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG;
             My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
           }
         }
         else
         {
-          /* 新帧不满足完整到点条件时，连续确认必须从零重新开始。 */
+          /* 任一新帧离开到点窗口，连续确认从零开始但 PID 继续追踪 -50 mm。 */
           My_ball_balance_debug_My.final_arrival_start_ms = 0U;
           My_ball_balance_debug_My.final_arrival_confirm_count = 0U;
         }
       }
     }
+
     My_ball_balance_debug_My.data_fresh = 1U;
+    My_ball_balance_debug_My.position_speed_mm_s = measured_speed;
     My_ball_balance_debug_My.measured_speed_mm_s = measured_speed;
+    My_ball_balance_debug_My.position_speed_ready = 1U;
     My_ball_balance_debug_My.distance_to_target_mm = My_ball_abs_My(position_error);
     My_ball_balance_debug_My.correction_angle_deg = correction;
     requested_angle = MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG + correction;
@@ -668,8 +615,8 @@ void My_ball_balance_update_10ms_My(void)
   else
   {
     /*
-     * 无首帧或通信超时时不继续使用旧状态；清除测速参考并把平台目标直接设为水平。
-     * 下层转向位置环仍负责角度软限位和 PWM 限幅，因此这里不访问外设、不阻塞。
+     * 尚未收到首帧或通信超时时，清除 PID、速度和连续到点确认，并按正常变化率平滑
+     * 回到水平。终止角已经锁存时例外，继续保持终止目标完成机械收尾。
      */
     My_ball_balance_debug_My.data_fresh = 0U;
     My_ball_balance_debug_My.position_speed_mm_s = 0.0f;
@@ -677,34 +624,138 @@ void My_ball_balance_update_10ms_My(void)
     My_ball_balance_debug_My.position_speed_ready = 0U;
     My_ball_balance_debug_My.distance_to_target_mm = 0.0f;
     My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
+    My_pid_reset_My(&My_ball_task3_pid_My);
+    My_ball_balance_debug_My.pid_p_angle_deg = 0.0f;
+    My_ball_balance_debug_My.pid_i_angle_deg = 0.0f;
+    My_ball_balance_debug_My.pid_d_angle_deg = 0.0f;
+    My_ball_balance_debug_My.pid_output_angle_deg = 0.0f;
     if (My_ball_balance_debug_My.negative_target_reached == 0U)
     {
-      /* 未最终到点时通信中断会使连续确认作废，恢复通信后必须从新帧重新确认。 */
       My_ball_balance_debug_My.final_arrival_settling = 0U;
       My_ball_balance_debug_My.final_arrival_start_ms = 0U;
       My_ball_balance_debug_My.final_arrival_confirm_count = 0U;
       My_ball_final_arrival_last_frame_count_My =
         My_ball_balance_debug_My.valid_frame_count;
     }
-    My_ball_speed_reference_ready_My = 0U;
+
     if (My_ball_balance_debug_My.terminal_angle_commanded != 0U)
     {
-      /* 终止角度已经由有效数据触发，即使后续丢帧也保持该目标完成收敛。 */
       My_ball_balance_debug_My.correction_angle_deg =
         MY_BALL_TERMINAL_MOTOR_ANGLE_DEG - MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG;
       requested_angle = MY_BALL_TERMINAL_MOTOR_ANGLE_DEG;
     }
     else
     {
-      My_ball_balance_debug_My.correction_angle_deg = 0.0f;
-      requested_angle = MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG;
+      My_ball_task3_correction_My = My_ball_move_toward_My(
+        My_ball_task3_correction_My,
+        0.0f,
+        MY_BALL_TASK3_CORRECTION_STEP_DEG);
+      My_ball_balance_debug_My.correction_angle_deg = My_ball_task3_correction_My;
+      requested_angle += My_ball_task3_correction_My;
     }
   }
 
+  /* 下层位置环继续执行角度软限位、方向切换保护和 PWM 限幅。 */
+  My_ball_balance_debug_My.target_motor_angle_deg = requested_angle;
+  My_steering_set_target_angle_My(requested_angle);
+}
+
+/**
+  * @brief 在 TIM6 的 10 ms 周期中执行任务 4/5 钢球零点位置式 PID。
+  * @details 本函数在任务 4/5 的行驶和停车阶段持续执行。它读取主循环原子提交的
+  *          摄像头位置、速度和时间戳，将位置误差送入 P/I 项、返回速度送入 D 项，
+  *          并限制电机目标角幅值和变化率。中断内不阻塞、不打印、
+  *          不分配动态内存，也不直接读写慢速通信外设。
+  */
+void My_ball_balance_update_zero_10ms_My(void)
+{
+  float requested_angle = MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG; /* 本周期下发给转向位置环的绝对目标角度。 */
+  uint32_t now_ms = HAL_GetTick(); /* 用于判断摄像头数据是否超过 200 ms 的统一时间快照。 */
+
   /*
-   * 制动条件成立后直接切换角度目标，不再叠加外环变化率延迟；下层位置环继续执行
-   * 角度软限位、PID 输出限幅和方向切换前 PWM 清零，避免绕过既有机构保护。
+   * 位置、速度和到达时刻由主循环在短临界区内按同一帧整体提交。当前处于 TIM6
+   * 中断上下文，主循环不会并发改写；只接受未超时的完整测量。协议速度先做物理
+   * 上限约束再直接送入 D 项，不进行位置差分或观测器替代。
    */
+  if (My_ball_balance_debug_My.has_measurement != 0U &&
+      (uint32_t)(now_ms - My_ball_balance_debug_My.last_update_ms) <=
+        MY_BALL_COMMUNICATION_TIMEOUT_MS)
+  {
+    float position_error; /* 0 mm 目标减观测位置，单位毫米。 */
+    float measured_speed; /* 摄像头同一帧返回并完成物理限幅的钢球速度。 */
+
+    measured_speed = My_ball_limit_symmetric_My(
+      (float)My_ball_balance_debug_My.speed_mm_s,
+      MY_BALL_SPEED_ABS_LIMIT_MM_S);
+    position_error = (float)MY_BALL_ZERO_TARGET_MM -
+      (float)My_ball_balance_debug_My.position_mm;
+    My_ball_zero_correction_My = My_ball_calculate_pid_correction_My(
+      &My_ball_zero_pid_My,
+      &My_ball_zero_correction_My,
+      (float)MY_BALL_ZERO_TARGET_MM,
+      (float)My_ball_balance_debug_My.position_mm,
+      measured_speed,
+      MY_BALL_ZERO_INTEGRAL_DISTANCE_MM,
+      MY_BALL_ZERO_INTEGRAL_SPEED_MM_S,
+      MY_BALL_ZERO_INTEGRAL_DECAY,
+      MY_BALL_ZERO_CORRECTION_STEP_DEG);
+
+    if (My_ball_abs_My(position_error) <= MY_BALL_ZERO_ARRIVE_DISTANCE_MM &&
+        My_ball_abs_My(measured_speed) <=
+          MY_BALL_ZERO_ARRIVE_SPEED_MM_S)
+    {
+      /* 位置和速度均进入中心窗口时标记保持，但连续控制仍可补偿小静差。 */
+      My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
+    }
+    else if (measured_speed *
+               (MY_BALL_CONTROL_DIRECTION * My_ball_zero_correction_My) < 0.0f)
+    {
+      /* 控制作用与当前运动方向相反时标记制动，便于现场观察阻尼是否及时介入。 */
+      My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_BRAKE;
+    }
+    else
+    {
+      My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_DRIVE;
+    }
+
+    My_ball_balance_debug_My.data_fresh = 1U;
+    My_ball_balance_debug_My.target_position_mm = MY_BALL_ZERO_TARGET_MM;
+    My_ball_balance_debug_My.position_speed_mm_s = measured_speed;
+    My_ball_balance_debug_My.measured_speed_mm_s = measured_speed;
+    My_ball_balance_debug_My.position_speed_ready = 1U;
+    My_ball_balance_debug_My.distance_to_target_mm = My_ball_abs_My(position_error);
+    My_ball_balance_debug_My.correction_angle_deg = My_ball_zero_correction_My;
+    requested_angle = MY_BALL_HORIZONTAL_MOTOR_ANGLE_DEG +
+      My_ball_zero_correction_My;
+  }
+  else
+  {
+    /*
+     * 尚未收到首帧或通信超时时，禁止继续沿用旧观测状态；清除速度和积分，并按
+     * 与正常控制相同的变化率逐步回到水平，避免丢帧瞬间产生反向角度阶跃。该分支
+     * 只写控制状态，角度软限位和 PWM 限幅仍由位置内环负责。
+     */
+    My_ball_balance_debug_My.data_fresh = 0U;
+    My_ball_balance_debug_My.target_position_mm = MY_BALL_ZERO_TARGET_MM;
+    My_ball_balance_debug_My.position_speed_mm_s = 0.0f;
+    My_ball_balance_debug_My.measured_speed_mm_s = 0.0f;
+    My_ball_balance_debug_My.position_speed_ready = 0U;
+    My_ball_balance_debug_My.distance_to_target_mm = 0.0f;
+    My_ball_balance_debug_My.control_state = MY_BALL_CONTROL_STATE_HOLD;
+    My_pid_reset_My(&My_ball_zero_pid_My);
+    My_ball_balance_debug_My.pid_p_angle_deg = 0.0f;
+    My_ball_balance_debug_My.pid_i_angle_deg = 0.0f;
+    My_ball_balance_debug_My.pid_d_angle_deg = 0.0f;
+    My_ball_balance_debug_My.pid_output_angle_deg = 0.0f;
+    My_ball_zero_correction_My = My_ball_move_toward_My(
+      My_ball_zero_correction_My,
+      0.0f,
+      MY_BALL_ZERO_CORRECTION_STEP_DEG);
+    My_ball_balance_debug_My.correction_angle_deg = My_ball_zero_correction_My;
+    requested_angle += My_ball_zero_correction_My;
+  }
+
+  /* 下层位置环继续执行角度软限位、方向切换保护和 PWM 限幅。 */
   My_ball_balance_debug_My.target_motor_angle_deg = requested_angle;
   My_steering_set_target_angle_My(requested_angle);
 }

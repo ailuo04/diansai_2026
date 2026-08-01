@@ -97,6 +97,67 @@ float My_pid_calc_position_My(volatile My_pid_t *pid, float target, float actual
   return pid->output;
 }
 
+/**
+  * @brief 使用传感器提供的实际变化速度执行位置式 PID 计算。
+  * @param pid PID 参数和历史状态
+  * @param target 位置目标
+  * @param actual 实际位置
+  * @param actual_derivative 传感器返回的实际位置变化速度
+  * @param integration_period_s 本周期积分时间；小于等于零时暂停新增积分
+  * @retval 完成积分抗饱和和输出限幅后的控制量
+  * @details D 项使用负的实际变化速度，避免位置量化差分噪声和目标阶跃引起的微分冲击。
+  */
+float My_pid_calc_position_with_derivative_My(volatile My_pid_t *pid,
+                                               float target,
+                                               float actual,
+                                               float actual_derivative,
+                                               float integration_period_s)
+{
+  float previous_integral; /* 本周期积分前快照，用于输出饱和时撤销有害积分。 */
+  float candidate_integral; /* 按本次有效积分时间计算并限幅后的候选积分。 */
+  float integral_output_change; /* 候选积分相对上周期增加的输出量。 */
+  float unlimited_output; /* 完成 P、I 和外部速度 D 项叠加但尚未限幅的输出。 */
+  float limited_output; /* 按 PID 输出上限约束后的输出。 */
+
+  if (pid == 0)
+  {
+    return 0.0f;
+  }
+
+  pid->error = target - actual;
+  previous_integral = pid->integral;
+  candidate_integral = previous_integral;
+  if (integration_period_s > 0.0f)
+  {
+    candidate_integral += pid->error * integration_period_s;
+    candidate_integral = My_pid_limit_My(candidate_integral, pid->integral_limit);
+  }
+
+  unlimited_output = pid->kp * pid->error
+                   + pid->ki * candidate_integral
+                   - pid->kd * actual_derivative;
+  limited_output = My_pid_limit_My(unlimited_output, pid->output_limit);
+  integral_output_change = pid->ki * (candidate_integral - previous_integral);
+
+  if (limited_output != unlimited_output &&
+      ((unlimited_output > 0.0f && integral_output_change > 0.0f) ||
+       (unlimited_output < 0.0f && integral_output_change < 0.0f)))
+  {
+    /* 新增积分继续推高饱和输出时撤销本周期积分，避免执行器限幅期间积分累积。 */
+    candidate_integral = previous_integral;
+    unlimited_output = pid->kp * pid->error
+                     + pid->ki * candidate_integral
+                     - pid->kd * actual_derivative;
+    limited_output = My_pid_limit_My(unlimited_output, pid->output_limit);
+  }
+
+  pid->integral = candidate_integral;
+  pid->output = limited_output;
+  pid->prev_error = pid->last_error;
+  pid->last_error = pid->error;
+  return pid->output;
+}
+
 float My_pid_calc_angle_My(volatile My_pid_t *pid, float target, float actual)
 {
   float error; /* 折算到 -180 到 180 度范围内的角度误差。 */
